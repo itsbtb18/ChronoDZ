@@ -1,0 +1,117 @@
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+
+import "./i18n";
+import { clearAuthSession, getAuthSession } from "./auth/session";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { LanguageAwareShell } from "./components/LanguageAwareShell";
+import { AppLanguage, LANGUAGE_STORAGE_KEY } from "./i18n";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { BookingPage } from "./pages/BookingPage";
+import { LanguageSelectionPage } from "./pages/LanguageSelectionPage";
+import { StaffLogin } from "./pages/StaffLogin";
+import { SuperAdminDashboardPage } from "./pages/SuperAdminDashboardPage";
+import { UserLogin } from "./pages/UserLogin";
+
+export default function App() {
+  const { i18n } = useTranslation();
+  const navigate = useNavigate();
+  const [selectedLanguage, setSelectedLanguage] = useState<AppLanguage | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const storedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return storedLanguage === "fr" || storedLanguage === "ar"
+      ? storedLanguage
+      : null;
+  });
+
+  useEffect(() => {
+    if (selectedLanguage) {
+      i18n.changeLanguage(selectedLanguage);
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
+    }
+  }, [i18n, selectedLanguage]);
+
+  const language = selectedLanguage ?? "fr";
+
+  return (
+    <LanguageAwareShell language={language}>
+      <Routes>
+        <Route
+          path="/language"
+          element={
+            <LanguageSelectionPage
+              onSelectLanguage={(nextLanguage) => {
+                setSelectedLanguage(nextLanguage);
+                navigate("/login", { replace: true });
+              }}
+            />
+          }
+        />
+
+        <Route
+          path="/login"
+          element={
+            <UserLogin
+              language={language}
+              onChangeLanguage={setSelectedLanguage}
+            />
+          }
+        />
+
+        <Route
+          path="/staff/login"
+          element={
+            <StaffLogin
+              language={language}
+              onChangeLanguage={setSelectedLanguage}
+            />
+          }
+        />
+
+        <Route element={<ProtectedRoute allowedRoles={["CUSTOMER"]} redirectTo="/login" />}>
+          <Route
+            path="/dashboard"
+            element={<BookingPage language={language} phoneNumber={getAuthSession()?.phone || ""} />}
+          />
+        </Route>
+
+        <Route element={<ProtectedRoute allowedRoles={["ADMIN"]} redirectTo="/staff/login" />}>
+          <Route path="/admin/dashboard" element={<AdminDashboardPage language={language} />} />
+        </Route>
+
+        <Route element={<ProtectedRoute allowedRoles={["SUPER_ADMIN"]} redirectTo="/staff/login" />}>
+          <Route
+            path="/superadmin/dashboard"
+            element={<SuperAdminDashboardPage language={language} />}
+          />
+        </Route>
+
+        <Route
+          path="/logout"
+          element={
+            <LogoutPage onDone={() => {
+              clearAuthSession();
+            }} />
+          }
+        />
+
+        <Route
+          path="*"
+          element={<Navigate to={selectedLanguage ? "/login" : "/language"} replace />}
+        />
+      </Routes>
+    </LanguageAwareShell>
+  );
+}
+
+function LogoutPage({ onDone }: { onDone: () => void }) {
+  useEffect(() => {
+    onDone();
+  }, [onDone]);
+
+  return <Navigate to="/login" replace />;
+}
