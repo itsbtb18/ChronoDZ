@@ -16,6 +16,7 @@ type Customer = {
   role: string;
   date_joined: string;
   secret_code_preview?: string;
+  secret_code_plain?: string;
   establishment_name?: string | null;
 };
 

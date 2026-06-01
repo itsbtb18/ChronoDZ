@@ -266,6 +266,7 @@ export function ReservationConfirmationPage() {
         start_time: confirmation.start_time,
         end_time: confirmation.end_time,
         status: "EN_ATTENTE",
+        payment_method: paymentMethod.toUpperCase(),
         total_price: confirmation.total_price,
       };
 

@@ -660,6 +660,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
         start_time: startTime,
         end_time: endTime,
         status: selectedBookingToEdit?.status ?? "EN_ATTENTE",
+        payment_method: "CASH",
         total_price: String(selectedPrice),
       };
 

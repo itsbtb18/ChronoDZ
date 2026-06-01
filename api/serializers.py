@@ -116,6 +116,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "secret_code",
             "secret_code_preview",
+            "secret_code_plain",
             "created_in_person",
         ]
         read_only_fields = [
@@ -124,10 +125,11 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "is_active",
             "is_staff",
             "secret_code_preview",
+            "secret_code_plain",
         ]
 
     def get_secret_code_preview(self, obj):
-        return "******"
+        return obj.secret_code_plain or "******"
 
     def validate(self, attrs):
         role = attrs.get("role", getattr(self.instance, "role", UserRole.CUSTOMER))
@@ -203,6 +205,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "start_time",
             "end_time",
             "status",
+            "payment_method",
             "total_price",
             "created_at",
             "validated_at",

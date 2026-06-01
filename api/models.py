@@ -51,6 +51,11 @@ class BookingStatus(models.TextChoices):
     ANNULE = "ANNULE", "Annulé"
 
 
+class PaymentMethod(models.TextChoices):
+    CASH = "CASH", "Cash"
+    BARIDIMOB = "BARIDIMOB", "BaridiMob"
+
+
 class ResourceStatus(models.TextChoices):
     ACTIF = "ACTIF", "Actif"
     EN_PANNE = "EN_PANNE", "En panne"
@@ -142,6 +147,13 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     )
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    secret_code_plain = models.CharField(
+        max_length=6,
+        blank=True,
+        default="",
+        verbose_name="Code secret (clair)",
+        help_text="Stocké en clair pour pouvoir réimprimer le ticket client.",
+    )
 
     objects = CustomUserManager()
 
@@ -171,6 +183,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     def set_secret_code(self, secret_code: str) -> None:
         secret_code_validator(str(secret_code))
         self.set_password(str(secret_code))
+        self.secret_code_plain = str(secret_code)
 
     def check_secret_code(self, secret_code: str) -> bool:
         return self.check_password(str(secret_code))
@@ -241,6 +254,13 @@ class Booking(models.Model):
         choices=BookingStatus.choices,
         default=BookingStatus.EN_ATTENTE,
         verbose_name="Statut",
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PaymentMethod.choices,
+        null=True,
+        blank=True,
+        verbose_name="Moyen de paiement",
     )
     total_price = models.DecimalField(
         max_digits=10,
