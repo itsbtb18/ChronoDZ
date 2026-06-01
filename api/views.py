@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -153,9 +154,9 @@ class CustomUserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(role=role)
         if search:
             queryset = queryset.filter(
-                Q(phone__icontains=search) |
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search)
+                Q(phone__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
             )
         return queryset
 
@@ -169,10 +170,56 @@ class CustomUserViewSet(viewsets.ModelViewSet):
                     phone=user.phone,
                     message=(
                         f"Bienvenue {user.first_name} {user.last_name}. "
-                        f"Votre compte Chrono.dz est prêt."
+                        f"Votre compte Laverie de la residence est prêt."
                     ),
                 )
             )
+
+    def create(self, request, *args, **kwargs):
+        """Override create to include a ticket URL in the response so the frontend
+        can navigate directly to the ticket page after creating a user.
+        """
+        logger = logging.getLogger(__name__)
+        # Log auth headers and request user for debugging authentication issues
+        try:
+            auth_header = request.headers.get("Authorization")
+            logger.debug("Create user request Authorization: %s", auth_header)
+            logger.debug(
+                "Request user before create(): is_authenticated=%s user=%s",
+                getattr(request.user, "is_authenticated", None),
+                getattr(request.user, "pk", None),
+            )
+            # Log a minimal set of META that can affect auth/proxy (for dev server)
+            logger.debug(
+                "Request META keys: PATH=%s REMOTE_ADDR=%s HTTP_HOST=%s",
+                request.path,
+                request.META.get("REMOTE_ADDR"),
+                request.META.get("HTTP_HOST"),
+            )
+        except Exception:
+            logger.exception("Failed to log create request diagnostics")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+
+        # serializer.data may not include all fields (e.g., id) depending on
+        # representation; use instance when available.
+        instance = getattr(serializer, "instance", None)
+        user_id = None
+        if instance is not None:
+            user_id = getattr(instance, "id", None)
+        else:
+            user_id = serializer.data.get("id")
+
+        data = dict(serializer.data)
+        if user_id is not None:
+            ticket_path = f"/admin/dashboard/customers/{user_id}/ticket"
+            data["ticket_url"] = ticket_path
+            # also expose a Location header (relative) for clients that inspect it
+            headers.setdefault("Location", ticket_path)
+
+        return Response(data, status=201, headers=headers)
 
     def perform_update(self, serializer):
         previous_instance = self.get_object()
@@ -184,7 +231,7 @@ class CustomUserViewSet(viewsets.ModelViewSet):
                 NotificationPayload(
                     phone=user.phone,
                     message=(
-                        f"Bonjour {user.first_name}, votre compte a été créé avec succès sur Chrono.dz."
+                        f"Bonjour {user.first_name}, votre compte a été créé avec succès sur Laverie de la residence."
                     ),
                 )
             )
@@ -216,10 +263,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(booking_date=booking_date)
         if search:
             queryset = queryset.filter(
-                Q(booking_reference__icontains=search) |
-                Q(user__phone__icontains=search) |
-                Q(user__first_name__icontains=search) |
-                Q(user__last_name__icontains=search)
+                Q(booking_reference__icontains=search)
+                | Q(user__phone__icontains=search)
+                | Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search)
             )
         return queryset
 
@@ -262,9 +309,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                 {"detail": "Les paramètres date et establishment_id sont obligatoires."}
             )
 
-        if duration not in {15, 30, 60}:
+        if duration not in {15, 30, 45, 60}:
             raise ValidationError(
-                {"duration": "La durée doit être 15, 30 ou 60 minutes."}
+                {"duration": "La durée doit être 15, 30, 45 ou 60 minutes."}
             )
 
         try:
@@ -310,7 +357,9 @@ class BookingViewSet(viewsets.ModelViewSet):
                     "color": "red" if is_full else "green",
                 }
             )
-            current_start += timedelta(minutes=duration)
+            # Keep a fixed 15-minute start grid so different booking durations
+            # (15/30/45/60) can coexist consistently across one or many machines.
+            current_start += timedelta(minutes=DEFAULT_SLOT_STEP_MINUTES)
 
         return Response(
             {
@@ -323,6 +372,123 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "slots": slots,
             }
         )
+
+    @action(detail=False, methods=["get"], url_path="available-slots-range")
+    def available_slots_range(self, request):
+        """Return availability for a range of dates in a single request.
+
+        Parameters:
+        - start: YYYY-MM-DD
+        - end: YYYY-MM-DD
+        - establishment_id
+        - duration
+        """
+        start_value = request.query_params.get("start")
+        end_value = request.query_params.get("end")
+        establishment_id = request.query_params.get("establishment_id")
+        duration = int(request.query_params.get("duration", DEFAULT_SLOT_STEP_MINUTES))
+
+        if not start_value or not end_value or not establishment_id:
+            raise ValidationError(
+                {
+                    "detail": "Les paramètres start, end et establishment_id sont obligatoires."
+                }
+            )
+
+        if duration not in {15, 30, 45, 60}:
+            raise ValidationError(
+                {"duration": "La durée doit être 15, 30, 45 ou 60 minutes."}
+            )
+
+        try:
+            start_date = datetime.strptime(start_value, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_value, "%Y-%m-%d").date()
+            establishment_id_int = int(establishment_id)
+        except ValueError as exc:
+            raise ValidationError({"detail": "Paramètres invalides."}) from exc
+
+        if start_date > end_date:
+            raise ValidationError(
+                {"detail": "Le paramètre start doit être antérieur ou égal à end."}
+            )
+
+        active_resources = _active_resources_count(establishment_id_int)
+
+        # Preload all bookings for the date range and establishment to avoid one DB query per slot
+        bookings_qs = (
+            Booking.objects.filter(
+                resource__establishment_id=establishment_id_int,
+                booking_date__gte=start_date,
+                booking_date__lte=end_date,
+                resource__status=ResourceStatus.ACTIF,
+            )
+            .exclude(status=BookingStatus.ANNULE)
+            .values("booking_date", "resource_id", "start_time", "end_time")
+        )
+
+        # Organize bookings by date for faster in-memory checks
+        bookings_by_date = {}
+        for b in bookings_qs:
+            d = b["booking_date"].isoformat()
+            bookings_by_date.setdefault(d, []).append(b)
+
+        results = {}
+        current_date = start_date
+        while current_date <= end_date:
+            date_key = current_date.isoformat()
+            slots = []
+            current_start = datetime.combine(current_date, OPENING_TIME)
+            last_start = datetime.combine(current_date, CLOSING_TIME) - timedelta(
+                minutes=duration
+            )
+
+            day_bookings = bookings_by_date.get(date_key, [])
+
+            # For each slot, count distinct resources that overlap
+            while current_start <= last_start:
+                current_end = current_start + timedelta(minutes=duration)
+
+                overlapping_resources = set()
+                for b in day_bookings:
+                    # b[start_time]/[end_time] are time objects
+                    b_start = datetime.combine(current_date, b["start_time"])
+                    b_end = datetime.combine(current_date, b["end_time"])
+                    if b_start < current_end and b_end > current_start:
+                        overlapping_resources.add(b["resource_id"])
+
+                overlapping_count = len(overlapping_resources)
+                is_full = active_resources == 0 or overlapping_count >= active_resources
+
+                slots.append(
+                    {
+                        "start_time": current_start.time().strftime("%H:%M"),
+                        "end_time": current_end.time().strftime("%H:%M"),
+                        "reserved_resources": overlapping_count,
+                        "total_resources": active_resources,
+                        "available_resources": max(
+                            active_resources - overlapping_count, 0
+                        ),
+                        "status": "FULL" if is_full else "AVAILABLE",
+                        "status_label": "Complet" if is_full else "Disponible",
+                        "color": "red" if is_full else "green",
+                    }
+                )
+
+                current_start += timedelta(minutes=DEFAULT_SLOT_STEP_MINUTES)
+
+            results[date_key] = {
+                "date": current_date,
+                "establishment_id": establishment_id_int,
+                "duration": duration,
+                "opening_time": OPENING_TIME.strftime("%H:%M"),
+                "closing_time": CLOSING_TIME.strftime("%H:%M"),
+                "total_resources": active_resources,
+                "slots": slots,
+            }
+
+            current_date += timedelta(days=1)
+
+        return Response({"availability": results})
 
     @transaction.atomic
     def perform_create(self, serializer):
@@ -377,7 +543,7 @@ class BookingViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         previous_instance = self.get_object()
         old_status = previous_instance.status
-        
+
         # If status becomes PAYE and validated_by is not set, set it to request.user
         if (
             self.request.user.role in {UserRole.ADMIN, UserRole.SUPER_ADMIN}
@@ -593,7 +759,9 @@ class SuperAdminFinancialSummaryAPIView(APIView):
         # ── Période : aujourd'hui / semaine / mois ──
         today_qs = base_qs.filter(booking_date=today)
         week_qs = base_qs.filter(booking_date__gte=week_start, booking_date__lte=today)
-        month_qs = base_qs.filter(booking_date__gte=month_start, booking_date__lte=today)
+        month_qs = base_qs.filter(
+            booking_date__gte=month_start, booking_date__lte=today
+        )
 
         today_agg = today_qs.aggregate(
             revenue=Sum("total_price"), bookings_count=Count("id")

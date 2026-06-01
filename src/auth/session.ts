@@ -9,7 +9,32 @@ export type AuthSession = {
   phone: string;
 };
 
-const AUTH_STORAGE_KEY = "chrono-dz-auth";
+const AUTH_STORAGE_KEY = "laverie-de-la-residence-auth";
+
+function decodeJwtPayload(token: string): { exp?: number } | null {
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+
+  try {
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const paddedPayload = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const decoded = atob(paddedPayload);
+    return JSON.parse(decoded) as { exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+export function isJwtExpired(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload?.exp) {
+    return true;
+  }
+
+  return payload.exp * 1000 <= Date.now();
+}
 
 export function getAuthSession(): AuthSession | null {
   if (typeof window === "undefined") {
@@ -26,6 +51,12 @@ export function getAuthSession(): AuthSession | null {
     if (!parsed?.accessToken || !parsed?.role) {
       return null;
     }
+
+    if (isJwtExpired(parsed.accessToken)) {
+      clearAuthSession();
+      return null;
+    }
+
     return parsed;
   } catch {
     return null;
@@ -38,14 +69,14 @@ export function saveAuthSession(session: AuthSession) {
   }
 
   window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
-  window.localStorage.setItem("chrono-dz-access-token", session.accessToken);
-  window.localStorage.setItem("chrono-dz-role", session.role);
-  window.localStorage.setItem("chrono-dz-phone-number", session.phone || "");
+  window.localStorage.setItem("laverie-de-la-residence-access-token", session.accessToken);
+  window.localStorage.setItem("laverie-de-la-residence-role", session.role);
+  window.localStorage.setItem("laverie-de-la-residence-phone-number", session.phone || "");
 
   if (session.role === "SUPER_ADMIN") {
-    window.localStorage.setItem("chrono-dz-superadmin-token", session.accessToken);
+    window.localStorage.setItem("laverie-de-la-residence-superadmin-token", session.accessToken);
   } else {
-    window.localStorage.removeItem("chrono-dz-superadmin-token");
+    window.localStorage.removeItem("laverie-de-la-residence-superadmin-token");
   }
 }
 
@@ -55,9 +86,9 @@ export function clearAuthSession() {
   }
 
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
-  window.localStorage.removeItem("chrono-dz-access-token");
-  window.localStorage.removeItem("chrono-dz-superadmin-token");
-  window.localStorage.removeItem("chrono-dz-role");
+  window.localStorage.removeItem("laverie-de-la-residence-access-token");
+  window.localStorage.removeItem("laverie-de-la-residence-superadmin-token");
+  window.localStorage.removeItem("laverie-de-la-residence-role");
 }
 
 export function authHeader(): HeadersInit {

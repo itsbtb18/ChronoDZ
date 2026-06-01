@@ -21,10 +21,10 @@ export function ProtectedRoute({ allowedRoles, redirectTo = "/login" }: Protecte
     }
 
     if (session.role === "ADMIN") {
-      return <Navigate to="/admin/dashboard" replace />;
+      return <Navigate to="/admin/dashboard/calendar" replace />;
     }
 
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/appointments" replace />;
   }
 
   return <Outlet />;

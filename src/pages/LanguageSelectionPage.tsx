@@ -1,6 +1,8 @@
 import { useTranslation } from "react-i18next";
 
 import type { AppLanguage } from "../i18n";
+import backgroundImg from "../assets/background.png";
+import logoImg from "../assets/logo.png";
 
 type LanguageSelectionPageProps = {
   onSelectLanguage: (language: AppLanguage) => void;
@@ -8,79 +10,111 @@ type LanguageSelectionPageProps = {
 
 const languageCards: Array<{
   code: AppLanguage;
-  labelKey: "french" | "arabic";
-  description: string;
-  badge: string;
+  label: string;
 }> = [
   {
     code: "fr",
-    labelKey: "french",
-    description: "Interface claire et intuitive en français.",
-    badge: "FR",
+    label: "Français",
   },
   {
     code: "ar",
-    labelKey: "arabic",
-    description: "واجهة عربية باتجاه من اليمين إلى اليسار.",
-    badge: "AR",
+    label: "العربية",
   },
 ];
 
 export function LanguageSelectionPage({ onSelectLanguage }: LanguageSelectionPageProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isArabic = i18n.language === "ar";
+  const tFr = i18n.getFixedT("fr");
+  const tAr = i18n.getFixedT("ar");
 
   return (
-    <main className="min-h-screen bg-transparent px-4 py-8 text-slate-900 sm:px-6 lg:px-8">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-5xl items-center justify-center">
-        <section className="grid w-full gap-6 overflow-hidden rounded-[2rem] border border-sky-100 bg-white/85 p-6 shadow-[0_30px_80px_rgba(14,165,233,0.18)] backdrop-blur md:grid-cols-[1.2fr_0.8fr] md:p-8">
-          <div className="space-y-6 rounded-[1.5rem] bg-gradient-to-br from-sky-500 to-sky-700 p-8 text-white shadow-lg">
-            <div className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium">
+    <main className="relative min-h-screen w-full overflow-x-hidden text-slate-900">
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `linear-gradient(rgba(2, 132, 199, 0.28), rgba(2, 132, 199, 0.14)), url(${backgroundImg})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      />
+      <div className="absolute inset-0 bg-white/8 backdrop-blur-[1px]" />
+
+      <section className="relative z-10 grid min-h-screen w-full lg:grid-cols-[1.1fr_0.9fr]">
+        <aside className="relative flex min-h-[36vh] flex-col justify-between overflow-hidden bg-gradient-to-br from-sky-600 via-sky-500 to-cyan-500 px-5 py-5 text-white sm:min-h-[40vh] sm:px-8 sm:py-8 lg:min-h-screen lg:px-10 lg:py-10">
+          <div className="absolute inset-0 opacity-45">
+            <div className="absolute left-4 top-6 h-24 w-24 rounded-full border border-white/20 sm:left-6 sm:top-8 sm:h-32 sm:w-32" />
+            <div className="absolute right-8 top-16 h-32 w-32 rounded-full border border-white/15 sm:right-10 sm:top-24 sm:h-44 sm:w-44" />
+            <div className="absolute -bottom-10 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/12 blur-3xl" />
+          </div>
+
+          <div className="relative z-10 inline-flex max-w-full items-center gap-3 self-start rounded-[1.5rem] border border-sky-100 bg-white px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)] sm:gap-4 sm:rounded-[2rem] sm:px-7 sm:py-4">
+            <img src={logoImg} alt="Logo Laverie de la residence" className="h-10 w-auto sm:h-14" />
+            <span className="text-sm font-black tracking-tight text-slate-900 sm:text-lg lg:text-xl">
               {t("appName")}
-            </div>
-            <div className="space-y-3">
-              <p className="text-sm font-semibold uppercase tracking-[0.35em] text-sky-100/90">
-                {t("skyBlueTheme")}
-              </p>
-              <h1 className="text-3xl font-bold leading-tight sm:text-4xl">
-                {t("chooseLanguageTitle")}
-              </h1>
-              <p className="max-w-md text-base leading-7 text-sky-50/90">
-                {t("chooseLanguageSubtitle")}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 text-sm leading-6 text-sky-50/90">
-              {t("languageHint")}
-            </div>
+            </span>
           </div>
 
-          <div className="flex flex-col justify-center space-y-4 p-2 sm:p-4">
-            {languageCards.map((language) => (
-              <button
-                key={language.code}
-                type="button"
-                onClick={() => onSelectLanguage(language.code)}
-                className="group flex items-center justify-between gap-4 rounded-2xl border border-sky-100 bg-sky-50/70 px-5 py-4 text-left transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-4 focus:ring-sky-200"
+          <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-2 py-4 text-center sm:py-6">
+            <div className="space-y-2">
+              <p className="text-3xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+                {tFr("chooseLanguageTitle")}
+              </p>
+              <p
+                className="text-2xl font-black leading-[1.12] tracking-tight text-white/95 sm:text-4xl lg:text-5xl"
+                dir="rtl"
+                lang="ar"
               >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-600 text-sm font-bold text-white shadow-md shadow-sky-200">
-                    {language.badge}
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {t(language.labelKey)}
-                    </p>
-                    <p className="text-sm text-slate-500">{language.description}</p>
-                  </div>
-                </div>
-                <span className="text-2xl text-sky-400 transition group-hover:translate-x-1">
-                  →
-                </span>
-              </button>
-            ))}
+                {tAr("chooseLanguageTitle")}
+              </p>
+            </div>
           </div>
-        </section>
-      </div>
+
+          <div aria-hidden="true" />
+        </aside>
+
+        <aside
+          dir={isArabic ? "rtl" : "ltr"}
+          lang={i18n.language}
+          className="relative flex min-h-[64vh] items-center justify-center bg-white/90 px-5 py-6 sm:min-h-[60vh] sm:px-8 sm:py-8 lg:min-h-screen lg:px-10 lg:py-10"
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.7),rgba(255,255,255,0.18))]" />
+
+          <div className="relative z-10 w-full max-w-md space-y-4">
+            <div className="space-y-1 text-center lg:text-left">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-600 sm:text-sm sm:tracking-[0.3em]">
+                {tFr("selectedLanguage")} / {tAr("selectedLanguage")}
+              </p>
+              <p className="text-sm font-medium text-slate-500 sm:text-base">
+                {tFr("chooseLanguageSubtitle")}
+              </p>
+              <p className="text-sm font-medium text-slate-500 sm:text-base" dir="rtl" lang="ar">
+                {tAr("chooseLanguageSubtitle")}
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {languageCards.map((language, index) => (
+                <button
+                  key={language.code}
+                  type="button"
+                  onClick={() => onSelectLanguage(language.code)}
+                  className="group flex w-full items-center justify-between rounded-[1.5rem] border border-sky-100 bg-white px-5 py-4 text-left shadow-[0_18px_50px_rgba(14,165,233,0.08)] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(14,165,233,0.16)] focus:outline-none focus:ring-4 focus:ring-sky-200/80 animate-fade-in-up"
+                  style={{ animationDelay: `${100 + index * 110}ms` }}
+                >
+                  <span className="text-lg font-extrabold text-slate-900 sm:text-xl">
+                    {language.label}
+                  </span>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full border border-sky-100 bg-sky-50 text-lg text-sky-500 transition group-hover:translate-x-1 group-hover:bg-sky-100">
+                    →
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </section>
     </main>
   );
 }

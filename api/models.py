@@ -46,7 +46,7 @@ class UserRole(models.TextChoices):
 
 
 class BookingStatus(models.TextChoices):
-    EN_ATTENTE = "EN_ATTENTE", "En attente"
+    EN_ATTENTE = "EN_ATTENTE", "Paiement en attente"
     PAYE = "PAYE", "Payé"
     ANNULE = "ANNULE", "Annulé"
 
@@ -274,6 +274,7 @@ class Booking(models.Model):
             models.UniqueConstraint(
                 fields=["resource", "booking_date", "start_time", "end_time"],
                 name="unique_resource_exact_booking_slot",
+                condition=~Q(status=BookingStatus.ANNULE),
             ),
         ]
         indexes = [
@@ -290,8 +291,15 @@ class Booking(models.Model):
                 {"end_time": "L'heure de fin doit être après l'heure de début."}
             )
 
-        if self.validated_by and self.validated_by.role not in {UserRole.ADMIN, UserRole.SUPER_ADMIN}:
-            raise ValidationError({"validated_by": "Le validateur doit être un assistant ou un super admin."})
+        if self.validated_by and self.validated_by.role not in {
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        }:
+            raise ValidationError(
+                {
+                    "validated_by": "Le validateur doit être un assistant ou un super admin."
+                }
+            )
 
         if self.status == BookingStatus.ANNULE:
             return

@@ -8,8 +8,12 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { LanguageAwareShell } from "./components/LanguageAwareShell";
 import { AppLanguage, LANGUAGE_STORAGE_KEY } from "./i18n";
 import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { AdminBookingDetailPage } from "./pages/AdminBookingDetailPage";
+import { AdminCustomerDetailPage } from "./pages/AdminCustomerDetailPage";
+import { AdminAssistantPage } from "./pages/AdminAssistantPage";
 import { BookingPage } from "./pages/BookingPage";
 import { LanguageSelectionPage } from "./pages/LanguageSelectionPage";
+import { ReservationConfirmationPage } from "./pages/ReservationConfirmationPage";
 import { StaffLogin } from "./pages/StaffLogin";
 import { SuperAdminDashboardPage } from "./pages/SuperAdminDashboardPage";
 import { UserLogin } from "./pages/UserLogin";
@@ -36,17 +40,28 @@ export default function App() {
   }, [i18n, selectedLanguage]);
 
   const language = selectedLanguage ?? "fr";
+  const session = getAuthSession();
+
+  const loginRedirectTarget = session
+    ? session.role === "ADMIN"
+      ? "/admin/dashboard/calendar"
+      : session.role === "SUPER_ADMIN"
+        ? "/superadmin/dashboard"
+        : "/appointments"
+    : null;
 
   return (
     <LanguageAwareShell language={language}>
       <Routes>
+        <Route path="/" element={<Navigate to="/language" replace />} />
+
         <Route
           path="/language"
           element={
             <LanguageSelectionPage
               onSelectLanguage={(nextLanguage) => {
                 setSelectedLanguage(nextLanguage);
-                navigate("/login", { replace: true });
+                navigate("/login");
               }}
             />
           }
@@ -55,10 +70,12 @@ export default function App() {
         <Route
           path="/login"
           element={
-            <UserLogin
-              language={language}
-              onChangeLanguage={setSelectedLanguage}
-            />
+            loginRedirectTarget
+              ? <Navigate to={loginRedirectTarget} replace />
+              : <UserLogin
+                  language={language}
+                  onChangeLanguage={setSelectedLanguage}
+                />
           }
         />
 
@@ -74,13 +91,21 @@ export default function App() {
 
         <Route element={<ProtectedRoute allowedRoles={["CUSTOMER"]} redirectTo="/login" />}>
           <Route
-            path="/dashboard"
+            path="/appointments/*"
             element={<BookingPage language={language} phoneNumber={getAuthSession()?.phone || ""} />}
           />
+          <Route path="/confirmation" element={<ReservationConfirmationPage />} />
         </Route>
 
         <Route element={<ProtectedRoute allowedRoles={["ADMIN"]} redirectTo="/staff/login" />}>
-          <Route path="/admin/dashboard" element={<AdminDashboardPage language={language} />} />
+          <Route path="/admin/dashboard" element={<Navigate to="/admin/dashboard/calendar" replace />} />
+          <Route path="/admin/dashboard/customers/:customerId" element={<AdminCustomerDetailPage language={language} />} />
+          <Route path="/admin/dashboard/customers/:customerId/ticket" element={<AdminAssistantPage establishmentName="Laverie de la residence" />} />
+          <Route path="/admin/dashboard/*" element={<AdminDashboardPage language={language} />} />
+          <Route
+            path="/admin/dashboard/bookings/:bookingId"
+            element={<AdminBookingDetailPage language={language} />}
+          />
         </Route>
 
         <Route element={<ProtectedRoute allowedRoles={["SUPER_ADMIN"]} redirectTo="/staff/login" />}>

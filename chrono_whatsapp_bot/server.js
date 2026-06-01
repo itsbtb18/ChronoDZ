@@ -103,7 +103,7 @@ function buildBookingMessage(clientName, establishmentName, date, time, totalPri
 }
 
 const client = new Client({
-  authStrategy: new LocalAuth({ clientId: 'chrono-dz' }),
+  authStrategy: new LocalAuth({ clientId: 'laverie-de-la-residence' }),
   puppeteer: {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],

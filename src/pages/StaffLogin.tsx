@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { saveAuthSession } from "../auth/session";
 import type { AppLanguage } from "../i18n";
+import backgroundImg from "../assets/background.png";
 import logoImg from "../assets/logo.png";
 
 type StaffLoginProps = {
@@ -72,7 +73,7 @@ export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
         return;
       }
 
-      navigate("/admin/dashboard", { replace: true });
+      navigate("/admin/dashboard/calendar", { replace: true });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t("staffAccessDenied"));
     } finally {
@@ -81,34 +82,46 @@ export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
   };
 
   return (
-    <main className="h-screen w-screen bg-transparent text-slate-900 grid lg:grid-cols-[1.15fr_0.85fr] xl:grid-cols-[1.25fr_0.75fr] overflow-hidden">
+    <main
+      className="relative h-screen w-screen overflow-hidden text-slate-900"
+      style={{
+        backgroundImage: `linear-gradient(rgba(2, 132, 199, 0.28), rgba(2, 132, 199, 0.14)), url(${backgroundImg})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
+      <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px]" />
+      <div className="relative z-10 grid h-full w-full lg:grid-cols-[1.15fr_0.85fr] xl:grid-cols-[1.25fr_0.75fr]">
       {/* Colonne gauche (Présentation Staff - masquée sur mobile) */}
       <div className="hidden lg:flex flex-col justify-between p-10 xl:p-12 h-screen overflow-hidden relative z-10 animate-fade-in">
         {/* Top Header */}
         <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-sky-100/50 shadow-sm self-start">
           <img src={logoImg} alt="Logo" className="h-7 w-auto animate-scale-in" />
-          <span className="text-base font-black tracking-tight text-slate-900">Chrono.dz</span>
+          <span className="text-base font-black tracking-tight text-slate-900">Laverie de la residence</span>
         </div>
 
         {/* Center Presentation - Glassmorphism hero box tailored for Staff Control */}
         <div className="max-w-xl bg-white/92 backdrop-blur-lg rounded-[2rem] border border-sky-100/70 p-8 xl:p-10 shadow-[0_24px_60px_rgba(14,165,233,0.12)] my-auto space-y-4">
           <span className="inline-block rounded-full bg-slate-950 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-white">
-            STAFF SECURE
+            {t("staffHeroBadge")}
           </span>
           <h1 className="text-3xl xl:text-4xl font-black text-slate-900 leading-[1.3] tracking-tight">
             {isArabic ? (
               <>
-                الوصول الآمن <span className="text-sky-600">لوحدة التحكم</span> وإدارة الأنظمة
+                {t("staffHeroTitle")}
               </>
             ) : (
               <>
-                Espace sécurisé de <span className="text-sky-600">gestion & administration</span>
+                {t("staffHeroTitle")}
               </>
             )}
           </h1>
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4 text-xs xl:text-sm text-slate-600 leading-relaxed">
-            {t("staffAccessHint")}
-          </div>
+          {t("staffHeroSubtitle") ? (
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4 text-xs xl:text-sm text-slate-600 leading-relaxed">
+              {t("staffHeroSubtitle")}
+            </div>
+          ) : null}
         </div>
 
         <div className="h-1" />
@@ -118,14 +131,14 @@ export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
       <div
         dir={isArabic ? "rtl" : "ltr"}
         lang={language}
-        className="w-full h-screen bg-white/95 border-l border-sky-100 shadow-[0_0_80px_rgba(14,165,233,0.14)] flex flex-col justify-center p-8 sm:p-12 xl:p-16 backdrop-blur-md relative z-10 overflow-hidden"
+        className="w-full h-screen bg-white/92 border-l border-sky-100 shadow-[0_0_80px_rgba(14,165,233,0.14)] flex flex-col justify-center p-8 sm:p-12 xl:p-16 backdrop-blur-md relative z-10 overflow-hidden"
       >
         <div className="my-auto space-y-6 w-full max-w-sm mx-auto">
           {/* Logo & Header */}
           <div className="text-center space-y-3">
             <img
               src={logoImg}
-              alt="Logo Chrono.dz"
+              alt="Logo Laverie de la residence"
               className="mx-auto h-20 w-auto drop-shadow-sm transition duration-300 hover:scale-105 animate-scale-in"
             />
             <div className="space-y-1">
@@ -220,6 +233,7 @@ export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
             </button>
           </form>
         </div>
+      </div>
       </div>
     </main>
   );

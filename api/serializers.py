@@ -31,12 +31,10 @@ class EstablishmentSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         machine_count = validated_data.pop("machine_count", 0)
         establishment = super().create(validated_data)
-        
+
         for i in range(1, machine_count + 1):
             Resource.objects.create(
-                establishment=establishment,
-                label=f"Machine {i}",
-                status="ACTIF"
+                establishment=establishment, label=f"Machine {i}", status="ACTIF"
             )
         return establishment
 
@@ -44,36 +42,40 @@ class EstablishmentSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         machine_count = validated_data.pop("machine_count", None)
         establishment = super().update(instance, validated_data)
-        
+
         if machine_count is not None:
             current_resources = list(instance.resources.all().order_by("id"))
             current_count = len(current_resources)
-            
+
             if machine_count > current_count:
                 import re
+
                 max_idx = 0
                 for r in current_resources:
                     match = re.search(r"\d+", r.label)
                     if match:
                         max_idx = max(max_idx, int(match.group()))
-                
+
                 for i in range(1, machine_count - current_count + 1):
                     Resource.objects.create(
                         establishment=establishment,
                         label=f"Machine {max_idx + i}",
-                        status="ACTIF"
+                        status="ACTIF",
                     )
             elif machine_count < current_count:
                 diff = current_count - machine_count
                 resources_to_delete = current_resources[-diff:]
-                
+
                 from django.db.models import ProtectedError
+
                 for r in resources_to_delete:
                     try:
                         r.delete()
                     except ProtectedError:
                         raise serializers.ValidationError(
-                            {"machine_count": f"Impossible de supprimer la machine '{r.label}' car elle est liée à des réservations existantes."}
+                            {
+                                "machine_count": f"Impossible de supprimer la machine '{r.label}' car elle est liée à des réservations existantes."
+                            }
                         )
         return establishment
 
@@ -176,6 +178,8 @@ class BookingSerializer(serializers.ModelSerializer):
         source="resource.establishment.name", read_only=True
     )
     resource_label = serializers.CharField(source="resource.label", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)
     validated_by_phone = serializers.CharField(
         source="validated_by.phone", read_only=True
@@ -188,6 +192,8 @@ class BookingSerializer(serializers.ModelSerializer):
             "id",
             "booking_reference",
             "user",
+            "user_first_name",
+            "user_last_name",
             "user_phone",
             "resource",
             "resource_label",
@@ -215,9 +221,14 @@ class BookingSerializer(serializers.ModelSerializer):
         validated_by = attrs.get(
             "validated_by", getattr(self.instance, "validated_by", None)
         )
-        if validated_by and validated_by.role not in {UserRole.ADMIN, UserRole.SUPER_ADMIN}:
+        if validated_by and validated_by.role not in {
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        }:
             raise serializers.ValidationError(
-                {"validated_by": "Le validateur doit être un assistant ou un super admin."}
+                {
+                    "validated_by": "Le validateur doit être un assistant ou un super admin."
+                }
             )
         return attrs
 
@@ -264,7 +275,9 @@ class SuperAdminManagerSerializer(serializers.ModelSerializer):
         secret_code = validated_data.pop("secret_code", None)
         if not secret_code:
             raise serializers.ValidationError(
-                {"secret_code": "Le code secret est obligatoire pour créer un assistant."}
+                {
+                    "secret_code": "Le code secret est obligatoire pour créer un assistant."
+                }
             )
         validated_data["role"] = UserRole.ADMIN
         validated_data["is_active"] = True

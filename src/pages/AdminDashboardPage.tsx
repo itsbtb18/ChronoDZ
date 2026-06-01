@@ -8,7 +8,7 @@ type AdminDashboardPageProps = {
 
 export function AdminDashboardPage({ language }: AdminDashboardPageProps) {
   const session = getAuthSession();
-  const establishmentName = session?.establishmentName || "Chrono Dz - Administration";
+  const establishmentName = session?.establishmentName || "Laverie de la residence - Administration";
 
   return (
     <>

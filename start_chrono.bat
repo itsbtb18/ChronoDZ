@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 cd /d "%~dp0"
 echo ========================================
-echo   Chrono.dz - Bootstrap ^& Run
+echo   Laverie de la residence - Bootstrap ^& Run
 ECHO ========================================
 
 if not exist "venv\Scripts\python.exe" (
@@ -50,10 +50,10 @@ if errorlevel 1 (
 )
 
 echo [5/6] Lancement du serveur Django...
-start "Chrono Django" cmd /k "cd /d "%~dp0" && call venv\Scripts\activate.bat && python manage.py runserver"
+start "Laverie Django" cmd /k "cd /d "%~dp0" && call venv\Scripts\activate.bat && python manage.py runserver"
 
 echo [6/6] Lancement du bot WhatsApp Node.js...
-start "Chrono WhatsApp Bot" cmd /k "cd /d "%~dp0chrono_whatsapp_bot" && if not exist node_modules npm install && node server.js"
+start "Laverie WhatsApp Bot" cmd /k "cd /d "%~dp0chrono_whatsapp_bot" && if not exist node_modules npm install && node server.js"
 
 echo.
 echo Services demarres:

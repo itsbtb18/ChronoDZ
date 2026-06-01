@@ -303,7 +303,7 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
         <div className="flex items-center gap-3 px-6 py-6 border-b border-sky-100/40">
           <img src={logoImg} alt="Logo" className="h-10 w-auto" />
           <div>
-            <h1 className="text-lg font-black tracking-tight text-slate-900">Chrono.dz</h1>
+            <h1 className="text-lg font-black tracking-tight text-slate-900">Laverie de la residence</h1>
             <p className="text-[10px] font-semibold text-sky-600 uppercase tracking-[0.2em]">{t("superAdminRole")}</p>
           </div>
         </div>
@@ -846,7 +846,7 @@ function superAdminFetch(path: string, options: RequestInit = {}) {
   headers.set("Content-Type", "application/json");
 
   if (typeof window !== "undefined") {
-    const token = window.localStorage.getItem("chrono-dz-access-token") || window.localStorage.getItem("chrono-dz-superadmin-token");
+    const token = window.localStorage.getItem("laverie-de-la-residence-access-token") || window.localStorage.getItem("laverie-de-la-residence-superadmin-token");
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
 

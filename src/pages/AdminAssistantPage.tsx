@@ -1,8 +1,35 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { authHeader, clearAuthSession, getAuthSession } from "../auth/session";
+// Local DetailCard (inlined) to avoid cross-file resolution issues in TS server
+function DetailCard({
+  label,
+  value,
+  accent = "sky",
+  className,
+}: {
+  label: string;
+  value: any;
+  accent?: "sky" | "emerald" | "rose" | "amber";
+  className?: string;
+}) {
+  const accentClasses = {
+    sky: "border-sky-100 bg-sky-50/70 text-sky-700",
+    emerald: "border-emerald-100 bg-emerald-50/70 text-emerald-700",
+    rose: "border-rose-100 bg-rose-50/70 text-rose-700",
+    amber: "border-amber-100 bg-amber-50/70 text-amber-800",
+  } as const;
+
+  return (
+    <div className={`rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] ${accentClasses[accent]} ${className ?? ""}`}>
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">{label}</p>
+      <p className="mt-2 text-lg font-black leading-snug text-slate-900">{value}</p>
+    </div>
+  );
+}
+import { LANGUAGE_STORAGE_KEY, type AppLanguage } from "../i18n";
 import logoImg from "../assets/logo.png";
 
 import {
@@ -10,6 +37,8 @@ import {
   WhatsAppQrScanner,
 } from "../components/WhatsAppQrScanner";
 import { TicketPrinter, TicketReceipt } from "../components/TicketPrinter";
+
+const CREATION_TICKET_STORAGE_KEY = "chrono-dz:last-created-ticket";
 
 /* ──────────────────────── SVG Icons ──────────────────────── */
 const Icons = {
@@ -38,6 +67,7 @@ type Customer = {
   last_name: string;
   role: string;
   date_joined: string;
+  secret_code_preview?: string;
 };
 
 type Resource = {
@@ -51,6 +81,8 @@ type Booking = {
   id: number;
   booking_reference: string;
   user: number;
+  user_first_name?: string;
+  user_last_name?: string;
   user_phone: string;
   resource: number;
   resource_label: string;
@@ -63,20 +95,78 @@ type Booking = {
   validated_at?: string;
 };
 
+const CALENDAR_START_MINUTES = 8 * 60;
+const CALENDAR_END_MINUTES = 22 * 60;
+const CALENDAR_STEP_MINUTES = 15;
+
+function formatMinutesToTime(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function toMinutes(timeValue: string) {
+  const [hours, minutes] = timeValue.slice(0, 5).split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function overlapsSlot(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && endA > startB;
+}
+
+function getBookingClientName(booking: Booking) {
+  const nameParts = [booking.user_first_name, booking.user_last_name].filter(Boolean);
+  if (nameParts.length > 0) {
+    return nameParts.join(" ");
+  }
+
+  return booking.user_phone;
+}
+
+const ADMIN_TAB_PATHS: Record<Tab, string> = {
+  creation: "/admin/dashboard/creation",
+  clients: "/admin/dashboard/creation",
+  calendar: "/admin/dashboard/calendar",
+  validation: "/admin/dashboard/validation",
+  machines: "/admin/dashboard/machines",
+};
+
+function getTabFromPath(pathname: string): Tab {
+  if (pathname.includes("/validation")) {
+    return "validation";
+  }
+
+  if (pathname.includes("/calendar")) {
+    return "calendar";
+  }
+
+  if (pathname.includes("/machines")) {
+    return "machines";
+  }
+
+  return "creation";
+}
+
 export function AdminAssistantPage({
   establishmentName,
   establishmentId,
 }: AdminAssistantPageProps) {
   const { t, i18n } = useTranslation();
+  const location = useLocation();
   const navigate = useNavigate();
   const isArabic = i18n.language === "ar";
+  const isTicketRoute = location.pathname.includes("/ticket");
+  const ticketCustomerId = useMemo(() => {
+    const match = location.pathname.match(/\/admin\/dashboard\/customers\/(\d+)\/ticket$/);
+    return match ? Number(match[1]) : null;
+  }, [location.pathname]);
   const estId = establishmentId || 1;
 
   // Sidebar collapsed on mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Navigation (left sidebar menu)
-  const [activeTab, setActiveTab] = useState<Tab>("creation");
+  const [activeTab, setActiveTab] = useState<Tab>(() => getTabFromPath(location.pathname));
 
   // expose a ref to control ticket preview printing
   const ticketPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -106,6 +196,7 @@ export function AdminAssistantPage({
   const [clients, setClients] = useState<Customer[]>([]);
   const [loadingClients, setLoadingClients] = useState(false);
   const [creationStep, setCreationStep] = useState<"form" | "ticket">("form");
+  const [ticketPreview, setTicketPreview] = useState<TicketReceipt | null>(null);
   const [createLastName, setCreateLastName] = useState("");
   const [createFirstName, setCreateFirstName] = useState("");
   const [createPhone, setCreatePhone] = useState("");
@@ -154,18 +245,52 @@ export function AdminAssistantPage({
   // Receipt Preview and Printing
   const [receiptData, setReceiptData] = useState<TicketReceipt | null>(null);
   const [printingBookingId, setPrintingBookingId] = useState<number | null>(null);
+  const navigationState = location.state as { receipt?: TicketReceipt } | null;
+  const storedTicketReceipt = useMemo<TicketReceipt | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(CREATION_TICKET_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw) as TicketReceipt;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }, []);
+  const initialTicketReceipt = navigationState?.receipt || storedTicketReceipt;
+  const [ticketCustomer, setTicketCustomer] = useState<Customer | null>(null);
+  const [ticketLoading, setTicketLoading] = useState(Boolean(isTicketRoute && !initialTicketReceipt));
+  const [ticketError, setTicketError] = useState<string | null>(null);
 
   // Tab 4: Machines State
   const [loadingMachines, setLoadingMachines] = useState(false);
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const [assistantDisplayName, setAssistantDisplayName] = useState("Assistant");
 
   const session = getAuthSession();
-  const userName = "Assistant";
   const userPhone = session?.phone || "0000000000";
 
   const handleLogout = () => {
     clearAuthSession();
     navigate("/staff/login", { replace: true });
   };
+
+  const handleLanguageChange = (nextLanguage: AppLanguage) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+    setLanguageMenuOpen(false);
+    void i18n.changeLanguage(nextLanguage);
+  };
+
+  useEffect(() => {
+    const nextTab = getTabFromPath(location.pathname);
+    setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab));
+  }, [location.pathname]);
 
   // Helper date lists for direct selector (next 7 days)
   const quickDates = useMemo(() => {
@@ -192,8 +317,46 @@ export function AdminAssistantPage({
     return dates;
   }, [i18n.language]);
 
+  useEffect(() => {
+    if (!session?.userId) {
+      return;
+    }
+
+    let active = true;
+
+    const loadAssistantProfile = async () => {
+      try {
+        const response = await fetch(`/api/users/${session.userId}/`, {
+          headers: authHeader(),
+        });
+
+        if (!response.ok || !active) {
+          return;
+        }
+
+        const payload = (await response.json()) as { first_name?: string; last_name?: string };
+        const nameParts = [payload.first_name, payload.last_name].filter(Boolean);
+        setAssistantDisplayName(nameParts.length > 0 ? nameParts.join(" ") : session.phone || "Assistant");
+      } catch {
+        if (active) {
+          setAssistantDisplayName(session.phone || "Assistant");
+        }
+      }
+    };
+
+    void loadAssistantProfile();
+
+    return () => {
+      active = false;
+    };
+  }, [session?.phone, session?.userId]);
+
   // Load Resources & Bookings for Calendar & Machines tabs
   useEffect(() => {
+    if (isTicketRoute) {
+      return;
+    }
+
     let active = true;
     async function loadData() {
       setLoadingCalendar(true);
@@ -226,6 +389,10 @@ export function AdminAssistantPage({
 
   // Clients Tab search effect
   useEffect(() => {
+    if (isTicketRoute) {
+      return;
+    }
+
     let active = true;
     if (activeTab !== "clients" && activeTab !== "calendar" && activeTab !== "creation") return;
 
@@ -254,14 +421,12 @@ export function AdminAssistantPage({
     };
   }, [searchClientQuery, activeTab, refreshCounter]);
 
-  useEffect(() => {
-    if (!createSecretCode) {
-      setCreateSecretCode(String(Math.floor(100000 + Math.random() * 900000)));
-    }
-  }, [createSecretCode]);
-
   // Manual Booking client search effect
   useEffect(() => {
+    if (isTicketRoute) {
+      return;
+    }
+
     let active = true;
     if (!selectedSlotForBooking) return;
 
@@ -289,6 +454,10 @@ export function AdminAssistantPage({
 
   // Validation search effect
   useEffect(() => {
+    if (isTicketRoute) {
+      return;
+    }
+
     let active = true;
     if (activeTab !== "validation") return;
     if (!searchBookingQuery.trim()) {
@@ -320,31 +489,74 @@ export function AdminAssistantPage({
     };
   }, [searchBookingQuery, activeTab]);
 
+  useEffect(() => {
+    if (!isTicketRoute || initialTicketReceipt || !ticketCustomerId) {
+      return;
+    }
+
+    let active = true;
+    setTicketLoading(true);
+    setTicketError(null);
+
+    const loadTicketCustomer = async () => {
+      try {
+        const response = await fetch(`/api/users/${ticketCustomerId}/`, {
+          headers: authHeader(),
+        });
+
+        if (!response.ok) {
+          throw new Error("Client introuvable.");
+        }
+
+        const payload = (await response.json()) as Customer;
+        if (active) {
+          setTicketCustomer(payload);
+        }
+      } catch (errorValue) {
+        if (active) {
+          setTicketError(errorValue instanceof Error ? errorValue.message : "Erreur de chargement.");
+        }
+      } finally {
+        if (active) {
+          setTicketLoading(false);
+        }
+      }
+    };
+
+    void loadTicketCustomer();
+
+    return () => {
+      active = false;
+    };
+  }, [initialTicketReceipt, isTicketRoute, ticketCustomerId]);
+
   // Handle WhatsApp QR Scan
   const handleScan = (payload: ParsedWhatsAppQr) => {
     if (payload.kind === "booking-validation") {
       setSearchBookingQuery(payload.bookingId);
-      setActiveTab("validation");
+      navigate(ADMIN_TAB_PATHS.validation, { replace: true });
       showSuccess(t("scanDetected"));
     }
   };
 
-  // Convert time string "HH:MM" or "HH:MM:SS" to minutes of day
-  const timeToMinutes = (timeStr: string) => {
-    const parts = timeStr.split(":");
-    return Number(parts[0]) * 60 + Number(parts[1]);
-  };
-
-  // Generate 28 half-hour slots from 08:00 to 22:00
+  // Generate 15-minute slots from 08:00 to 22:00
   const slots = useMemo(() => {
     const list = [];
-    for (let m = 8 * 60; m < 22 * 60; m += 30) {
-      const h = Math.floor(m / 60);
-      const mins = m % 60;
-      list.push(`${String(h).padStart(2, "0")}:${String(mins).padStart(2, "0")}`);
+    for (let m = CALENDAR_START_MINUTES; m < CALENDAR_END_MINUTES; m += CALENDAR_STEP_MINUTES) {
+      list.push(formatMinutesToTime(m));
     }
     return list;
   }, []);
+
+  const activeResourcesCount = useMemo(
+    () => resources.filter((resource) => resource.status === "ACTIF").length,
+    [resources]
+  );
+
+  const activeBookings = useMemo(
+    () => bookings.filter((booking) => booking.status !== "ANNULE"),
+    [bookings]
+  );
 
   // Add minutes helper
   const addMinutesToTime = (timeStr: string, mins: number): string => {
@@ -463,9 +675,13 @@ export function AdminAssistantPage({
     secretCode: string;
   }) => {
     try {
+      console.log("Creating client payload:", payload);
+      showSuccess("Envoi de la requête de création...");
+      const _auth = authHeader();
+      console.log("Auth header for create:", _auth);
       const res = await fetch("/api/users/", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader() },
+        headers: { "Content-Type": "application/json", ..._auth },
         body: JSON.stringify({
           first_name: payload.firstName,
           last_name: payload.lastName,
@@ -477,17 +693,72 @@ export function AdminAssistantPage({
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        showError(err.detail || "Erreur création client");
+        let errMsg = "Erreur création client";
+        try {
+          const err = await res.json();
+          errMsg = err.detail || err.phone?.[0] || JSON.stringify(err);
+          console.error("Create client error response:", err);
+          // If the server reports an error on the phone field (likely "already exists"),
+          // attempt to find the existing user and redirect to their ticket page.
+          if (err && err.phone) {
+            try {
+              const searchRes = await fetch(`/api/users/?search=${encodeURIComponent(payload.phoneNumber)}`, {
+                headers: { "Content-Type": "application/json", ..._auth },
+              });
+              if (searchRes.ok) {
+                const users = await searchRes.json();
+                if (Array.isArray(users) && users.length > 0) {
+                  const existing = users[0];
+                  const ticketPath = existing.ticket_url || `/admin/dashboard/customers/${existing.id}/ticket`;
+                  console.log("Existing user found, redirecting to ticket:", existing);
+                  showSuccess("Un compte existe déjà pour ce numéro — redirection...");
+                  try {
+                    navigate(ticketPath, { state: {} });
+                  } catch (navErr) {
+                    // fallback to hard navigation if SPA navigate fails
+                    window.location.href = ticketPath;
+                  }
+                  return;
+                }
+              }
+            } catch (searchErr) {
+              console.warn("Failed to lookup existing user:", searchErr);
+            }
+          }
+        } catch (parseErr) {
+          console.error("Failed to parse error response", parseErr);
+        }
+        showError(errMsg);
         return;
       }
 
-      const created = await res.json();
-      // Show ticket preview (use existing TicketPrinter via receiptData)
-      // Fetch receipt for created user if backend provides booking-less receipt
-      // We'll assemble a minimal receipt for preview
+      console.log("Create response status:", res.status, res.statusText, "ok=", res.ok);
+      let created: any = null;
+      try {
+        const raw = await res.text();
+        console.log("Create raw response text:", raw);
+        try {
+          created = JSON.parse(raw);
+        } catch (parseErr) {
+          console.warn("Failed to parse create response as JSON:", parseErr);
+          created = null;
+        }
+      } catch (textErr) {
+        console.error("Failed to read create response text:", textErr);
+      }
+
+      console.log("Created client response (parsed):", created);
+
+      if (!created || typeof created.id === "undefined") {
+        console.error("Invalid created response:", created);
+        showError("Réponse invalide du serveur. Voir la console.");
+        return;
+      }
+
+      const ticketUrlFromApi = (created && created.ticket_url) || `/admin/dashboard/customers/${created.id}/ticket`;
+
       const receipt: TicketReceipt = {
-        bookingReference: "-",
+        bookingReference: created.phone,
         establishmentName: establishmentName,
         establishmentAddress: "",
         bookingDate: new Date().toISOString().slice(0, 10),
@@ -500,16 +771,25 @@ export function AdminAssistantPage({
         totalPrice: "0",
         paymentStatus: "NOT_APPLICABLE",
         paymentStatusLabel: "",
-        qrText: `LOGIN:${created.phone}:${created.secret_code}`,
+        qrText: `${window.location.origin}${ticketUrlFromApi.replace(/\/ticket$/, "")}`,
         createdAt: new Date().toISOString(),
       };
 
-      setReceiptData(receipt);
+      try {
+        sessionStorage.setItem(CREATION_TICKET_STORAGE_KEY, JSON.stringify(receipt));
+      } catch (storageErr) {
+        console.warn("Failed to persist creation ticket in sessionStorage:", storageErr);
+      }
+
+      setTicketPreview(receipt);
       setCreationStep("ticket");
+
+      // Stay on the same page and swap the creation form for the ticket view.
       showSuccess("Client créé. Ticket prêt à imprimer.");
       triggerRefresh();
     } catch (err) {
-      showError("Erreur lors de la création du client.");
+      console.error("Unexpected error during client creation:", err);
+      showError("Erreur lors de la création du client. Voir la console pour détails.");
     }
   };
 
@@ -536,10 +816,15 @@ export function AdminAssistantPage({
       setCreateLastName("");
       setCreateFirstName("");
       setCreatePhone("");
-      setCreateSecretCode(String(Math.floor(100000 + Math.random() * 900000)));
+      setCreateSecretCode("");
     } finally {
       setCreatingAccount(false);
     }
+  };
+
+  const resetCreationWorkflow = () => {
+    setCreationStep("form");
+    setTicketPreview(null);
   };
 
   // Toggle machine status (ACTIF / EN_PANNE)
@@ -684,12 +969,94 @@ export function AdminAssistantPage({
     { key: "machines", label: "Machines", icon: Icons.settings },
   ];
 
+  const ticketReceipt = useMemo<TicketReceipt | null>(() => {
+    if (initialTicketReceipt) {
+      return initialTicketReceipt;
+    }
+
+    if (!ticketCustomer) {
+      return null;
+    }
+
+    return {
+      bookingReference: "-",
+      establishmentName,
+      establishmentAddress: "",
+      bookingDate: new Date().toISOString().slice(0, 10),
+      startTime: new Date().toISOString().slice(11, 16),
+      endTime: new Date().toISOString().slice(11, 16),
+      clientFirstName: ticketCustomer.first_name,
+      clientLastName: ticketCustomer.last_name,
+      clientPhone: ticketCustomer.phone,
+      secretCode: ticketCustomer.secret_code_preview || null,
+      totalPrice: "0",
+      paymentStatus: "NOT_APPLICABLE",
+      paymentStatusLabel: "Compte créé",
+      qrText: `LOGIN:${ticketCustomer.phone}:${ticketCustomer.secret_code_preview || ""}`,
+      createdAt: new Date().toISOString(),
+    };
+  }, [establishmentName, initialTicketReceipt, ticketCustomer]);
+
+  if (isTicketRoute) {
+    const languageForTicket = (i18n.language === "ar" ? "ar" : "fr") as AppLanguage;
+
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-slate-50 via-sky-50/30 to-white text-slate-900">
+        <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+          <div className="flex flex-col gap-4 rounded-[2rem] border border-sky-100 bg-white/85 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.35em] text-sky-500">Ticket de création</p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">
+                Ticket client prêt à imprimer
+              </h1>
+              <p className="mt-2 text-sm text-slate-500">
+                Le ticket est affiché dans la même page admin pour éviter les problèmes de navigation SPA.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => navigate("/admin/dashboard/creation", { replace: true })}
+                className="rounded-2xl border border-sky-100 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
+              >
+                Retour à la création
+              </button>
+              {ticketCustomerId ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/dashboard/customers/${ticketCustomerId}`, { replace: true })}
+                  className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  Voir la fiche client
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {ticketLoading ? (
+            <div className="rounded-[2rem] border border-sky-100 bg-white p-10 text-center text-slate-500 shadow-[0_18px_45px_rgba(15,23,42,0.06)]">
+              Chargement...
+            </div>
+          ) : ticketError ? (
+            <div className="rounded-[2rem] border border-rose-200 bg-rose-50 p-6 text-rose-800 shadow-[0_18px_45px_rgba(15,23,42,0.06)]">
+              {ticketError}
+            </div>
+          ) : ticketReceipt ? (
+            <div className="rounded-[2rem] border border-sky-100 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:p-6">
+              <TicketPrinter receipt={ticketReceipt} language={languageForTicket} showPrintButton title="Ticket de création de compte" />
+            </div>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <div dir={isArabic ? "rtl" : "ltr"} className="flex h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-50 via-sky-50/30 to-white">
+    <div dir={isArabic ? "rtl" : "ltr"} className="flex h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-50 via-sky-50/30 to-white animate-fade-in-up">
       {/* ── Sidebar ── */}
       <aside className={`
         fixed inset-y-0 z-40 flex w-72 flex-col bg-white/80 backdrop-blur-xl border-r border-sky-100/60
-        shadow-[4px_0_30px_rgba(14,165,233,0.06)] transition-transform duration-300 lg:relative lg:translate-x-0
+        shadow-[4px_0_30px_rgba(14,165,233,0.06)] transition-transform duration-300 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0
         ${isArabic ? "right-0 border-l border-r-0" : "left-0"}
         ${sidebarOpen ? "translate-x-0" : (isArabic ? "translate-x-full lg:translate-x-0" : "-translate-x-full lg:translate-x-0")}
       `}>
@@ -697,28 +1064,31 @@ export function AdminAssistantPage({
         <div className="flex items-center gap-3 px-6 py-6 border-b border-sky-100/40">
           <img src={logoImg} alt="Logo" className="h-10 w-auto" />
           <div>
-            <h1 className="text-lg font-black tracking-tight text-slate-900">Chrono.dz</h1>
+            <h1 className="text-lg font-black tracking-tight text-slate-900">Laverie de la residence</h1>
             <p className="text-[10px] font-semibold text-sky-600 uppercase tracking-[0.2em]">{t("assistantSpace")}</p>
           </div>
         </div>
 
         {/* Nav Items */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-          {tabs.map((tab) => (
+          {tabs.map((tab, idx) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => { setActiveTab(tab.key); setSidebarOpen(false); }}
+              onClick={() => {
+                setSidebarOpen(false);
+                navigate(ADMIN_TAB_PATHS[tab.key], { replace: false });
+              }}
+              style={{ animationDelay: `${(idx + 1) * 80}ms` }}
               className={`
-                w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 cursor-pointer
+                w-full flex items-center px-6 py-3 rounded-2xl text-sm font-semibold transition-transform duration-300 transform will-change-transform cursor-pointer animate-slide-in-left
                 ${activeTab === tab.key
-                  ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-lg shadow-sky-200/50"
-                  : "text-slate-600 hover:bg-sky-50 hover:text-slate-900"
+                  ? "bg-gradient-to-r from-indigo-500 via-sky-500 to-cyan-500 text-white shadow-[0_12px_30px_rgba(59,130,246,0.2)]"
+                  : "text-slate-600 hover:bg-sky-50 hover:text-slate-900 hover:scale-[1.02]"
                 }
               `}
             >
-              {tab.icon}
-              <span>{tab.label}</span>
+              <span className="truncate">{tab.label}</span>
             </button>
           ))}
         </nav>
@@ -730,7 +1100,7 @@ export function AdminAssistantPage({
               {session?.phone?.slice(-2) || "A"}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-slate-900 truncate">{userName}</p>
+              <p className="text-sm font-bold text-slate-900 truncate">{assistantDisplayName}</p>
               <p className="text-[10px] text-slate-400 font-medium">{userPhone}</p>
             </div>
           </div>
@@ -754,39 +1124,21 @@ export function AdminAssistantPage({
       )}
 
       {/* ── Main Content Area ── */}
-      <main className="flex-1 overflow-y-auto">
-        {/* Top Bar identical to Super Admin */}
-        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 bg-white/70 backdrop-blur-xl border-b border-sky-100/40 px-6 py-4">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden rounded-xl p-2 bg-sky-50 text-sky-700 hover:bg-sky-100 transition cursor-pointer"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
-            </button>
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-slate-900">
-                {establishmentName}
-              </h2>
-              <p className="text-xs font-medium text-slate-500 mt-0.5">
-                 {t("assistantSubtitle")}
-              </p>
-            </div>
-          </div>
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className="fixed left-4 top-4 z-20 inline-flex lg:hidden rounded-xl p-2 bg-white/80 text-sky-700 shadow-sm backdrop-blur transition hover:bg-white"
+          aria-label={t("openMenu")}
+          title={t("openMenu")}
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /></svg>
+        </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={triggerRefresh}
-              className="flex items-center gap-2 rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-100 transition cursor-pointer"
-            >
-              {Icons.refresh}
-              <span className="hidden sm:inline">{t("refresh")}</span>
-            </button>
-          </div>
-        </header>
+        <div className="p-3 sm:p-4 lg:p-6" />
 
         {/* Content Area */}
-        <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+        <div className="space-y-6 px-3 pb-4 sm:px-4 lg:px-6 lg:pb-6">
           {/* ── Notification Banner ── */}
           {successMsg && (
             <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4 text-emerald-800 text-sm font-semibold flex items-center gap-2 shadow-sm">
@@ -800,147 +1152,193 @@ export function AdminAssistantPage({
           )}
 
           {/* ── Main Tab Contents ── */}
-          <div className="bg-white/60 rounded-[2rem] border border-sky-100/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-xl p-6 sm:p-8">
+          <div className="glass-card p-6 sm:p-8 animate-fade-in-up">
         {/* 1. CALENDAR TAB */}
         {activeTab === "calendar" && (
           <div className="space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
-                <h3 className="text-xl font-bold text-slate-900">{t("calendarTab")}</h3>
-                <p className="text-xs text-slate-500">Visualisez et réservez les machines en direct.</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.35em] text-sky-500">{t("calendarTab")}</p>
+                <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+                  Visualisez les réservations en temps réel
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Chaque cellule représente 15 minutes et ouvre les détails complets au clic.
+                </p>
               </div>
 
-              {/* Date Quick Selector */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0">
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 xl:pb-0">
                 {quickDates.map((qd) => (
                   <button
                     key={qd.value}
                     type="button"
                     onClick={() => setSelectedDate(qd.value)}
-                    className={`rounded-xl px-3 py-2 text-center text-xs font-semibold transition-all ${
+                    className={`min-w-20 rounded-[1rem] px-3 py-2.5 text-center text-xs font-semibold transition-all ${
                       selectedDate === qd.value
-                        ? "bg-sky-600 text-white shadow-md shadow-sky-100"
+                        ? "bg-sky-600 text-white shadow-[0_14px_30px_rgba(14,165,233,0.20)]"
                         : "bg-sky-50 text-slate-600 hover:bg-sky-100"
                     }`}
                   >
                     <div className="uppercase opacity-75">{qd.weekday}</div>
-                    <div className="mt-0.5">{qd.label}</div>
+                    <div className="mt-0.5 text-sm font-black">{qd.label}</div>
                   </button>
                 ))}
                 <input
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-3 text-xs font-semibold text-slate-700 outline-none"
+                  className="rounded-[1rem] border border-sky-100 bg-sky-50 px-3 py-3 text-xs font-semibold text-slate-700 outline-none"
                 />
               </div>
             </div>
 
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-[1.5rem] border border-sky-100 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+                <p className="text-[11px] font-black uppercase tracking-[0.32em] text-sky-500">Machines actives</p>
+                <p className="mt-2 text-2xl font-black text-slate-900">{activeResourcesCount}</p>
+              </div>
+              <div className="rounded-[1.5rem] border border-sky-100 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+                <p className="text-[11px] font-black uppercase tracking-[0.32em] text-sky-500">Réservations du jour</p>
+                <p className="mt-2 text-2xl font-black text-slate-900">{activeBookings.length}</p>
+              </div>
+              <div className="rounded-[1.5rem] border border-sky-100 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+                <p className="text-[11px] font-black uppercase tracking-[0.32em] text-sky-500">Tranche horaire</p>
+                <p className="mt-2 text-2xl font-black text-slate-900">15 min</p>
+              </div>
+            </div>
+
             {loadingCalendar ? (
-              <div className="py-20 text-center text-slate-500 font-semibold">{t("loading")}</div>
+              <div className="rounded-[2rem] border border-sky-100 bg-white/80 py-20 text-center text-slate-500 font-semibold shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
+                {t("loading")}
+              </div>
             ) : resources.length === 0 ? (
-              <div className="rounded-3xl border border-sky-100 bg-sky-50/50 p-12 text-center text-slate-500">
+              <div className="rounded-[2rem] border border-sky-100 bg-sky-50/50 p-12 text-center text-slate-500">
                 Aucun poste configuré pour cet établissement.
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-3xl border border-sky-100 bg-white">
-                <table className="w-full border-collapse text-left text-sm">
-                  <thead>
-                    <tr className="bg-sky-50/60 border-b border-sky-100">
-                      <th className="p-4 font-bold text-slate-700 w-24">Heure</th>
-                      {resources.map((res) => (
-                        <th key={res.id} className="p-4 font-bold text-slate-800 text-center min-w-[150px]">
-                          <div className="flex flex-col items-center">
-                            <span>{res.label}</span>
-                            <span
-                              className={`mt-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                res.status === "ACTIF"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-rose-100 text-rose-800"
-                              }`}
-                            >
-                              {res.status === "ACTIF" ? "Actif" : "En panne"}
-                            </span>
-                          </div>
+              <div className="overflow-hidden rounded-[2rem] border border-sky-100 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)]">
+                <div className="max-h-[calc(100vh-320px)] overflow-auto">
+                  <table className="min-w-[980px] w-full border-separate border-spacing-0 text-left text-sm">
+                    <thead className="sticky top-0 z-20 bg-white/95 backdrop-blur">
+                      <tr className="border-b border-sky-100 bg-sky-50/70">
+                        <th className="sticky left-0 z-30 w-24 border-b border-sky-100 bg-sky-50/95 p-4 font-black text-slate-700 shadow-[8px_0_20px_rgba(15,23,42,0.04)]">
+                          Heure
                         </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {slots.map((time) => {
-                      const slotMins = timeToMinutes(time);
-                      return (
-                        <tr key={time} className="border-b border-sky-50 hover:bg-slate-50/40">
-                          <td className="p-4 font-bold text-slate-600 bg-slate-50/20">{time}</td>
-                          {resources.map((res) => {
-                            // If machine is broken
-                            if (res.status === "EN_PANNE") {
-                              return (
-                                <td
-                                  key={res.id}
-                                  className="p-2 text-center text-xs font-semibold text-rose-700 bg-rose-50/30"
-                                >
-                                  Hors service
-                                </td>
-                              );
-                            }
+                        {resources.map((res) => (
+                          <th key={res.id} className="min-w-[220px] border-b border-sky-100 p-4 text-center font-black text-slate-800">
+                            <div className="flex flex-col items-center gap-1">
+                              <span>{res.label}</span>
+                              <span
+                                className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] ${
+                                  res.status === "ACTIF"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-rose-100 text-rose-800"
+                                }`}
+                              >
+                                {res.status === "ACTIF" ? "Actif" : "En panne"}
+                              </span>
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {slots.map((time, index) => {
+                        const slotMins = toMinutes(time);
+                        return (
+                          <tr key={time} className="group border-b border-sky-50/80 hover:bg-slate-50/40">
+                            <td className="sticky left-0 z-10 border-b border-sky-50 bg-white p-4 font-black text-slate-600 shadow-[8px_0_20px_rgba(15,23,42,0.04)]">
+                              <div className="flex flex-col">
+                                <span className="text-sm">{time}</span>
+                                <span className="text-[10px] font-semibold text-slate-400">15 min</span>
+                              </div>
+                            </td>
+                            {resources.map((res) => {
+                              if (res.status === "EN_PANNE") {
+                                return (
+                                  <td key={res.id} className="border-b border-sky-50 bg-rose-50/20 p-2">
+                                    <div className="flex h-full min-h-[64px] items-center justify-center rounded-[1.25rem] border border-rose-100 bg-rose-50/50 px-3 text-xs font-bold text-rose-700">
+                                      Hors service
+                                    </div>
+                                  </td>
+                                );
+                              }
 
-                            // Look for booking in slot [slotMins, slotMins + 30]
-                            const activeBooking = bookings.find((b) => {
-                              if (b.status === "ANNULE") return false;
-                              if (b.resource !== res.id) return false;
-                              const bStart = timeToMinutes(b.start_time);
-                              const bEnd = timeToMinutes(b.end_time);
-                              return bStart < slotMins + 30 && bEnd > slotMins;
-                            });
+                              const activeBooking = bookings.find((booking) => {
+                                if (booking.status === "ANNULE") {
+                                  return false;
+                                }
+                                if (booking.resource !== res.id) {
+                                  return false;
+                                }
+                                const bookingStart = toMinutes(booking.start_time);
+                                const bookingEnd = toMinutes(booking.end_time);
+                                return overlapsSlot(bookingStart, bookingEnd, slotMins, slotMins + CALENDAR_STEP_MINUTES);
+                              });
 
-                            if (activeBooking) {
-                              const isPaid = activeBooking.status === "PAYE";
+                              if (activeBooking) {
+                                const isPaid = activeBooking.status === "PAYE";
+                                const isCurrent = selectedBookingDetails?.id === activeBooking.id;
+                                return (
+                                  <td key={res.id} className="border-b border-sky-50 p-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigate(`/admin/dashboard/bookings/${activeBooking.id}`, {
+                                          state: { booking: activeBooking, returnTo: location.pathname },
+                                        });
+                                      }}
+                                      className={`group/slot flex h-full min-h-[64px] w-full cursor-pointer flex-col justify-between rounded-[1.25rem] border p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(15,23,42,0.08)] focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-white ${
+                                        isPaid
+                                          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                                          : "border-amber-200 bg-amber-50 text-amber-900"
+                                      } ${isCurrent ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-white" : ""}`}
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-black">{getBookingClientName(activeBooking)}</p>
+                                          <p className="mt-0.5 truncate text-[11px] font-semibold opacity-80">
+                                            {activeBooking.user_phone}
+                                          </p>
+                                          <p className="mt-0.5 truncate text-[11px] font-semibold opacity-70">
+                                            {activeBooking.booking_reference}
+                                          </p>
+                                        </div>
+                                        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${
+                                          isPaid ? "bg-white text-emerald-700" : "bg-white text-amber-700"
+                                        }`}>
+                                          {isPaid ? "Payé" : "En attente"}
+                                        </span>
+                                      </div>
+                                      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] font-semibold opacity-80">
+                                        <span>{activeBooking.start_time.slice(0, 5)} - {activeBooking.end_time.slice(0, 5)}</span>
+                                        <span>{activeBooking.total_price} DA</span>
+                                      </div>
+                                    </button>
+                                  </td>
+                                );
+                              }
+
                               return (
-                                <td key={res.id} className="p-2">
+                                <td key={res.id} className="border-b border-sky-50 p-2">
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedBookingDetails(activeBooking)}
-                                    className={`w-full rounded-2xl p-2 text-left text-xs font-medium border transition hover:shadow-md cursor-pointer ${
-                                      isPaid
-                                        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                                        : "bg-amber-50 border-amber-200 text-amber-800"
-                                    }`}
+                                    onClick={() =>
+                                      setSelectedSlotForBooking({ resource: res, time })
+                                    }
+                                    className="group flex h-full min-h-[64px] w-full cursor-pointer items-center justify-center rounded-[1.25rem] border border-dashed border-emerald-200 bg-emerald-50/20 px-3 text-sm font-black text-emerald-700 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50/60 hover:shadow-[0_16px_32px_rgba(16,185,129,0.10)] focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-white"
                                   >
-                                    <div className="font-bold flex items-center justify-between">
-                                      <span>{activeBooking.user_phone}</span>
-                                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-full bg-white/70">
-                                        {isPaid ? "Payé" : "En attente"}
-                                      </span>
-                                    </div>
-                                    <div className="opacity-80 mt-1 truncate">
-                                      {activeBooking.booking_reference}
-                                    </div>
+                                    <span className="transition group-hover:scale-[1.02]">+ Réserver</span>
                                   </button>
                                 </td>
                               );
-                            }
-
-                            // Free slot
-                            return (
-                              <td key={res.id} className="p-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedSlotForBooking({ resource: res, time })
-                                  }
-                                  className="w-full rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/10 py-3 text-center text-emerald-600 font-bold hover:bg-emerald-50/60 hover:-translate-y-0.5 transition cursor-pointer"
-                                >
-                                  + Réserver
-                                </button>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -948,135 +1346,194 @@ export function AdminAssistantPage({
 
         {/* 2. CREATION TAB */}
         {activeTab === "creation" && (
-          <div className="space-y-6">
-            {creationStep === "form" ? (
-              <>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-900">Créer un Compte Client</h3>
-                  <p className="text-xs text-slate-500 mt-1">Saisissez uniquement les informations du client puis créez le compte.</p>
+          <div className="relative overflow-hidden rounded-[2rem] border border-sky-100 bg-white/80 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:p-6 lg:p-8">
+            <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[2rem]">
+              <div className="absolute -left-16 top-8 h-40 w-40 rounded-full bg-sky-200/30 blur-3xl animate-float" />
+              <div className="absolute right-0 top-20 h-56 w-56 rounded-full bg-cyan-200/20 blur-3xl animate-float delay-300" />
+            </div>
+
+            <div className="relative space-y-6">
+              {creationStep === "ticket" && ticketPreview ? (
+                <div className="space-y-4 animate-fade-in-up">
+                  <div className="flex flex-col gap-4 rounded-[1.75rem] border border-sky-100 bg-white p-4 shadow-[0_18px_45px_rgba(15,23,42,0.05)] sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.35em] text-sky-500">Ticket prêt</p>
+                      <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+                        Remettez ce ticket au client
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Le code secret et les infos de connexion sont affichés ci-dessous.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={resetCreationWorkflow}
+                        className="rounded-2xl border border-sky-100 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
+                      >
+                        Nouveau client
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/dashboard/customers/${ticketCustomerId ?? ""}/ticket`, { replace: false, state: { receipt: ticketPreview } })}
+                        className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                      >
+                        Ouvrir la page ticket
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[1.75rem] border border-sky-100 bg-white p-4 shadow-[0_18px_45px_rgba(15,23,42,0.05)] sm:p-5">
+                    <TicketPrinter receipt={ticketPreview} showPrintButton title="Ticket de création de compte" />
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="animate-fade-in-up">
+                    <p className="text-[11px] font-black uppercase tracking-[0.35em] text-sky-500">Création client</p>
+                    <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+                      Créez un compte, recherchez un client, puis ouvrez sa fiche détaillée.
+                    </h3>
+                  </div>
 
-                <div className="rounded-2xl border border-sky-100 bg-white p-5 space-y-4">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                    Recherche client manuelle
-                    <input
-                      type="text"
-                      value={searchClientQuery}
-                      onChange={(e) => setSearchClientQuery(e.target.value)}
-                      placeholder={t("searchClients")}
-                      className="mt-2 w-full rounded-2xl border border-sky-100 bg-sky-50/40 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
-                    />
-                  </label>
-
-                  {searchClientQuery.trim() ? (
-                    loadingClients ? (
-                      <div className="text-xs text-slate-500">{t("loading")}</div>
-                    ) : clients.length === 0 ? (
-                      <div className="text-xs text-slate-400">{t("noClientsFound")}</div>
-                    ) : (
-                      <div className="max-h-44 overflow-y-auto rounded-xl border border-sky-100 divide-y divide-sky-50">
-                        {clients.map((c) => (
-                          <div key={c.id} className="px-3 py-2 text-xs flex items-center justify-between gap-3">
-                            <span className="font-semibold text-slate-700">{c.first_name} {c.last_name}</span>
-                            <span className="text-slate-500">{c.phone}</span>
-                          </div>
-                        ))}
+                  <div className="rounded-[1.75rem] border border-sky-100 bg-white p-4 sm:p-5 shadow-[0_18px_45px_rgba(15,23,42,0.05)] animate-fade-in-up delay-100">
+                    <label className="block text-[11px] font-black uppercase tracking-[0.3em] text-slate-500">
+                      Recherche client
+                      <div className="relative mt-3">
+                        <input
+                          type="text"
+                          value={searchClientQuery}
+                          onChange={(e) => setSearchClientQuery(e.target.value)}
+                          placeholder={t("searchClients")}
+                          className="w-full rounded-[1.25rem] border border-sky-100 bg-sky-50/40 py-4 pl-4 pr-14 text-sm font-medium outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Scanner QR"
+                          className="absolute right-2 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-[1rem] border border-sky-100 bg-white text-sky-600 shadow-sm transition hover:bg-sky-50"
+                        >
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h6M4 4v6M20 4h-6M20 4v6M4 20h6M4 20v-6M20 20h-6m6 0v-6" />
+                          </svg>
+                        </button>
                       </div>
-                    )
-                  ) : null}
-                </div>
-
-                <form onSubmit={handleCreateClientSubmit} className="rounded-2xl border border-sky-100 bg-white p-5 sm:p-6 space-y-5">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block text-sm font-semibold text-slate-700">
-                      Nom
-                      <input
-                        type="text"
-                        value={createLastName}
-                        onChange={(e) => setCreateLastName(e.target.value)}
-                        className="mt-1.5 w-full rounded-2xl border border-sky-100 bg-sky-50/30 px-4 py-3 outline-none transition focus:border-sky-400 focus:bg-white"
-                        required
-                      />
                     </label>
 
-                    <label className="block text-sm font-semibold text-slate-700">
-                      Prénom
-                      <input
-                        type="text"
-                        value={createFirstName}
-                        onChange={(e) => setCreateFirstName(e.target.value)}
-                        className="mt-1.5 w-full rounded-2xl border border-sky-100 bg-sky-50/30 px-4 py-3 outline-none transition focus:border-sky-400 focus:bg-white"
-                        required
-                      />
-                    </label>
+                    <div className="mt-4">
+                      {searchClientQuery.trim() ? (
+                        loadingClients ? (
+                          <div className="rounded-[1.25rem] border border-sky-100 bg-sky-50/30 px-4 py-6 text-sm text-slate-500">
+                            {t("loading")}
+                          </div>
+                        ) : clients.length === 0 ? (
+                          <div className="rounded-[1.25rem] border border-dashed border-sky-100 bg-sky-50/20 px-4 py-6 text-sm text-slate-400">
+                            {t("noClientsFound")}
+                          </div>
+                        ) : (
+                          <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+                            {clients.map((client) => (
+                              <button
+                                key={client.id}
+                                type="button"
+                                onClick={() => navigate(`/admin/dashboard/customers/${client.id}`)}
+                                className="group flex w-full items-center justify-between gap-4 rounded-[1.25rem] border border-sky-100 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_34px_rgba(15,23,42,0.08)]"
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-slate-900">
+                                    {client.first_name} {client.last_name}
+                                  </p>
+                                  <p className="mt-0.5 text-xs font-semibold text-slate-500">{client.phone}</p>
+                                </div>
+                                <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-sky-600 transition group-hover:bg-sky-100">
+                                  →
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      ) : null}
+                    </div>
                   </div>
 
-                  <label className="block text-sm font-semibold text-slate-700">
-                    Numéro de téléphone
-                    <input
-                      type="text"
-                      value={createPhone}
-                      onChange={(e) => setCreatePhone(e.target.value)}
-                      className="mt-1.5 w-full rounded-2xl border border-sky-100 bg-sky-50/30 px-4 py-3 outline-none transition focus:border-sky-400 focus:bg-white"
-                      required
-                    />
-                  </label>
+                  <form onSubmit={handleCreateClientSubmit} className="rounded-[1.75rem] border border-sky-100 bg-white p-4 shadow-[0_18px_45px_rgba(15,23,42,0.05)] sm:p-5 animate-fade-in-up delay-200">
+                    <div className="mb-5 flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-sky-500">Nouveau compte</p>
+                        <h4 className="mt-2 text-xl font-black text-slate-900">Créer un Compte Client</h4>
+                      </div>
+                    </div>
 
-                  <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-                    <label className="block text-sm font-semibold text-slate-700">
-                      Code secret
-                      <input
-                        type="text"
-                        value={createSecretCode}
-                        onChange={(e) => setCreateSecretCode(e.target.value)}
-                        className="mt-1.5 w-full rounded-2xl border border-sky-100 bg-sky-50/30 px-4 py-3 outline-none transition focus:border-sky-400 focus:bg-white tracking-[0.2em]"
-                        maxLength={6}
-                        required
-                      />
-                    </label>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="block text-sm font-semibold text-slate-700">
+                        Nom
+                        <input
+                          type="text"
+                          value={createLastName}
+                          onChange={(e) => setCreateLastName(e.target.value)}
+                          className="mt-2 w-full rounded-[1.25rem] border border-sky-100 bg-sky-50/30 px-4 py-3.5 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                          required
+                        />
+                      </label>
 
-                    <button
-                      type="button"
-                      onClick={regenerateSecretCode}
-                      className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-100 transition cursor-pointer"
-                    >
-                      Régénérer code secret
-                    </button>
-                  </div>
+                      <label className="block text-sm font-semibold text-slate-700">
+                        Prénom
+                        <input
+                          type="text"
+                          value={createFirstName}
+                          onChange={(e) => setCreateFirstName(e.target.value)}
+                          className="mt-2 w-full rounded-[1.25rem] border border-sky-100 bg-sky-50/30 px-4 py-3.5 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                          required
+                        />
+                      </label>
+                    </div>
 
-                  <button
-                    type="submit"
-                    disabled={creatingAccount}
-                    className="w-full rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-bold py-3.5 text-sm transition shadow-lg shadow-sky-100 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    {creatingAccount ? "Création..." : "Créer compte"}
-                  </button>
-                </form>
-              </>
-            ) : (
-              <div className="rounded-3xl border border-sky-100 bg-white p-6 sm:p-8 space-y-6" ref={ticketPreviewRef}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-xl font-bold text-slate-900">Aperçu du ticket</h3>
-                    <p className="text-xs text-slate-500 mt-1">Vérifiez les informations puis imprimez le ticket.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreationStep("form");
-                      setReceiptData(null);
-                    }}
-                    className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 transition cursor-pointer"
-                  >
-                    Nouveau compte
-                  </button>
-                </div>
+                    <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.1fr)_minmax(240px,0.9fr)]">
+                      <label className="block text-sm font-semibold text-slate-700">
+                        Numéro de téléphone
+                        <input
+                          type="text"
+                          value={createPhone}
+                          onChange={(e) => setCreatePhone(e.target.value)}
+                          className="mt-2 w-full rounded-[1.25rem] border border-sky-100 bg-sky-50/30 px-4 py-3.5 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                          required
+                        />
+                      </label>
 
-                {receiptData ? (
-                  <TicketPrinter receipt={receiptData} showPrintButton title="Ticket de création de compte" />
-                ) : null}
-              </div>
-            )}
+                      <label className="block text-sm font-semibold text-slate-700">
+                        Code secret
+                        <div className="mt-2 flex gap-3">
+                          <input
+                            type="text"
+                            value={createSecretCode}
+                            onChange={(e) => setCreateSecretCode(e.target.value)}
+                            className="min-w-0 flex-1 rounded-[1.25rem] border border-sky-100 bg-sky-50/30 px-4 py-3.5 tracking-[0.28em] outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:bg-white"
+                            maxLength={6}
+                            required
+                          />
+                          <button
+                            type="button"
+                            onClick={regenerateSecretCode}
+                            className="shrink-0 rounded-[1.25rem] bg-gradient-to-r from-sky-600 to-cyan-500 px-4 py-3.5 text-sm font-semibold text-white shadow-[0_18px_35px_rgba(14,165,233,0.24)] transition hover:-translate-y-0.5 hover:from-sky-500 hover:to-cyan-400"
+                          >
+                            Générer
+                          </button>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                      <button
+                        type="submit"
+                        disabled={creatingAccount}
+                        className="inline-flex min-h-12 flex-1 items-center justify-center rounded-[1.25rem] bg-gradient-to-r from-sky-600 to-cyan-500 px-5 py-3.5 text-sm font-black text-white shadow-[0_18px_35px_rgba(14,165,233,0.24)] transition hover:-translate-y-0.5 hover:from-sky-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {creatingAccount ? "Création..." : "Créer compte"}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -1125,7 +1582,7 @@ export function AdminAssistantPage({
                             resource: resources[0],
                             time: "08:00",
                           });
-                          setActiveTab("calendar");
+                          navigate(ADMIN_TAB_PATHS.calendar, { replace: false });
                         } else {
                           showError("Aucun poste configuré pour réserver.");
                         }
@@ -1220,9 +1677,14 @@ export function AdminAssistantPage({
               {selectedBookingDetails && (
                 <div className="rounded-3xl border border-sky-100 bg-sky-50/40 p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-slate-900 text-sm">
-                      Détails de {selectedBookingDetails.booking_reference}
-                    </h4>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        Détails de {selectedBookingDetails.booking_reference}
+                      </h4>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        {getBookingClientName(selectedBookingDetails)}
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setSelectedBookingDetails(null)}
@@ -1238,12 +1700,28 @@ export function AdminAssistantPage({
                         Client
                       </span>
                       <span className="font-bold text-slate-800 block mt-1">
+                        {getBookingClientName(selectedBookingDetails)}
+                      </span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-sky-50">
+                      <span className="text-slate-400 block uppercase font-bold tracking-wider text-[10px]">
+                        Téléphone
+                      </span>
+                      <span className="font-bold text-slate-800 block mt-1">
                         {selectedBookingDetails.user_phone}
                       </span>
                     </div>
                     <div className="bg-white p-3 rounded-xl border border-sky-50">
                       <span className="text-slate-400 block uppercase font-bold tracking-wider text-[10px]">
-                        Poste / Machine
+                        Référence
+                      </span>
+                      <span className="font-bold text-slate-800 block mt-1">
+                        {selectedBookingDetails.booking_reference}
+                      </span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-sky-50">
+                      <span className="text-slate-400 block uppercase font-bold tracking-wider text-[10px]">
+                        Mode
                       </span>
                       <span className="font-bold text-slate-800 block mt-1">
                         {selectedBookingDetails.resource_label}
@@ -1265,6 +1743,18 @@ export function AdminAssistantPage({
                       </span>
                       <span className="font-bold text-slate-800 block mt-1">
                         {selectedBookingDetails.total_price} DA
+                      </span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-sky-50 col-span-2">
+                      <span className="text-slate-400 block uppercase font-bold tracking-wider text-[10px]">
+                        Statut
+                      </span>
+                      <span className="font-bold text-slate-800 block mt-1">
+                        {selectedBookingDetails.status === "PAYE"
+                          ? "Payé"
+                          : selectedBookingDetails.status === "ANNULE"
+                            ? "Annulé"
+                            : "En attente"}
                       </span>
                     </div>
                   </div>
@@ -1398,6 +1888,93 @@ export function AdminAssistantPage({
               </button>
             </div>
 
+
+          {selectedBookingDetails && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+              role="presentation"
+              onClick={() => setSelectedBookingDetails(null)}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Détails du rendez-vous"
+                onClick={(event) => event.stopPropagation()}
+                className="w-full max-w-3xl overflow-hidden rounded-[2rem] border border-sky-100 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.24)]"
+              >
+                <div className="bg-gradient-to-r from-sky-500 via-cyan-500 to-blue-600 px-6 py-5 text-white sm:px-7">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.35em] text-white/80">
+                        Détails du rendez-vous
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">
+                        {getBookingClientName(selectedBookingDetails)}
+                      </h3>
+                      <p className="mt-1 text-sm font-semibold text-white/80">
+                        {selectedBookingDetails.booking_reference}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBookingDetails(null)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/15 text-white transition hover:bg-white/25"
+                      aria-label="Fermer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 px-6 py-6 sm:grid-cols-2 sm:px-7">
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Client</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{getBookingClientName(selectedBookingDetails)}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Téléphone</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.user_phone}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Référence</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.booking_reference}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Mode / Poste</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.resource_label}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Date</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.booking_date}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Horaire</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{`${selectedBookingDetails.start_time.slice(0, 5)} - ${selectedBookingDetails.end_time.slice(0, 5)}`}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Montant</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{`${selectedBookingDetails.total_price} DA`}</p>
+                  </div>
+
+                  <div className="rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Statut</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.status === "PAYE" ? "Payé" : selectedBookingDetails.status === "ANNULE" ? "Annulé" : "En attente"}</p>
+                  </div>
+
+                  <div className="sm:col-span-2 rounded-[1.5rem] border p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)] border-sky-100 bg-sky-50/70 text-sky-700">
+                    <p className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Validé par</p>
+                    <p className="mt-2 text-lg font-black leading-snug text-slate-900">{selectedBookingDetails.validated_by_phone || "-"}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
             {/* Quick Register New Client Panel (Toggle inside Modal) */}
             {quickCreateOpen ? (
               <form onSubmit={handleQuickCreateClient} className="space-y-4">
@@ -1422,7 +1999,6 @@ export function AdminAssistantPage({
                       required
                       value={quickLastName}
                       onChange={(e) => setQuickLastName(e.target.value)}
-                      placeholder="Nom"
                       className="w-full mt-1 rounded-xl border border-sky-50 bg-sky-50/40 px-3 py-2 text-slate-900 outline-none"
                     />
                   </label>
@@ -1433,7 +2009,6 @@ export function AdminAssistantPage({
                       required
                       value={quickFirstName}
                       onChange={(e) => setQuickFirstName(e.target.value)}
-                      placeholder="Prénom"
                       className="w-full mt-1 rounded-xl border border-sky-50 bg-sky-50/40 px-3 py-2 text-slate-900 outline-none"
                     />
                   </label>
@@ -1445,7 +2020,6 @@ export function AdminAssistantPage({
                     required
                     value={quickPhone}
                     onChange={(e) => setQuickPhone(e.target.value)}
-                    placeholder="07XXXXXXXX"
                     className="w-full mt-1 rounded-xl border border-sky-50 bg-sky-50/40 px-3 py-2 text-slate-900 outline-none"
                   />
                 </label>
@@ -1576,6 +2150,19 @@ export function AdminAssistantPage({
       )}
         </div>
       </main>
+      {/* Quick access ticket button on customer detail pages */}
+      {location.pathname.includes("/admin/dashboard/customers/") && !location.pathname.includes("/ticket") && (
+        <div className="fixed top-6 right-6 z-50">
+          <button
+            type="button"
+            onClick={() => navigate(`${location.pathname}/ticket`)}
+            aria-label="voir-ticket"
+            className="rounded-2xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-sky-500"
+          >
+            Voir le ticket
+          </button>
+        </div>
+      )}
     </div>
   );
 }

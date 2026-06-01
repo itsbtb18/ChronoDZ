@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
+import logoImg from "../assets/logo.png";
 
 export type TicketReceipt = {
   bookingReference?: string;
@@ -60,34 +61,30 @@ export function TicketPrinter({
       <div className="mx-auto flex justify-center overflow-auto rounded-[1.5rem] bg-slate-100 p-4">
         <article className="thermal-ticket bg-white px-4 py-5 text-[13px] leading-5 text-slate-900 shadow-lg">
           <header className="border-b border-dashed border-slate-300 pb-3 text-center">
-            <p className="text-sm font-bold uppercase tracking-[0.35em] text-slate-900">Chrono.dz</p>
-            <p className="mt-1 text-xs text-slate-500">{title || t("ticketTitle")}</p>
+            <div className="flex items-center justify-center gap-3">
+              <img src={logoImg} alt="logo" className="h-8 w-auto" />
+              <div className="text-left">
+                <p className="text-sm font-bold uppercase tracking-[0.35em] text-slate-900">{receipt.establishmentName}</p>
+                <p className="mt-1 text-xs text-slate-500">{title || t("ticketTitle")}</p>
+              </div>
+            </div>
           </header>
 
           <section className="space-y-3 py-4 text-[12px]">
-            {receipt.bookingReference ? <Line label={t("bookingReference")} value={receipt.bookingReference} rtl={isArabic} /> : null}
             <Line label={t("establishment")} value={receipt.establishmentName} rtl={isArabic} />
             {receipt.establishmentAddress ? <Line label={t("address")} value={receipt.establishmentAddress} rtl={isArabic} /> : null}
             {receipt.clientFirstName || receipt.clientLastName ? (
               <Line label={t("clientName")} value={`${receipt.clientFirstName || ""} ${receipt.clientLastName || ""}`.trim()} rtl={isArabic} />
             ) : null}
-            {receipt.clientPhone ? <Line label={t("phoneNumber")} value={receipt.clientPhone} rtl={isArabic} /> : null}
-            {receipt.bookingDate ? <Line label={t("bookingDate")} value={receipt.bookingDate} rtl={isArabic} /> : null}
-            {receipt.startTime && receipt.endTime ? <Line label={t("bookingTime")} value={`${receipt.startTime} - ${receipt.endTime}`} rtl={isArabic} /> : null}
-            {receipt.paymentStatusLabel ? <Line label={t("paymentStatus")} value={receipt.paymentStatusLabel} rtl={isArabic} /> : null}
-            {receipt.totalPrice ? <Line label={t("amountPaid")} value={`${receipt.totalPrice} DA`} rtl={isArabic} /> : null}
+            {receipt.clientPhone ? <Line label={"Identifiant"} value={receipt.clientPhone} rtl={isArabic} /> : null}
             {receipt.secretCode ? <Line label={t("secretCode")} value={receipt.secretCode} rtl={isArabic} /> : null}
-            <Line label={t("ticketCreatedAt")} value={createdLabel} rtl={isArabic} />
+            <Line label={"Créé le"} value={createdLabel} rtl={isArabic} />
           </section>
 
           <div className="border-t border-dashed border-slate-300 py-3 text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-900">
-              {receipt.bookingReference}
-            </p>
             <div className="mt-3 flex justify-center">
               <QRCodeSVG value={receipt.qrText} size={116} includeMargin level="M" />
             </div>
-            <p className="mt-3 text-[11px] text-slate-500">{receipt.qrText}</p>
             <p className="mt-2 text-xs font-semibold text-slate-700">{t("ticketQrHint")}</p>
           </div>
 

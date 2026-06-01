@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { saveAuthSession } from "../auth/session";
 import type { AppLanguage } from "../i18n";
+import backgroundImg from "../assets/background.png";
 import logoImg from "../assets/logo.png";
 
 type UserLoginProps = {
@@ -61,7 +62,7 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
         phone: payload.phone,
       });
 
-      navigate("/dashboard", { replace: true });
+      navigate("/appointments", { replace: true });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t("authInvalidCredentials"));
     } finally {
@@ -70,13 +71,23 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
   };
 
   return (
-    <main className="h-screen w-screen bg-transparent text-slate-900 grid lg:grid-cols-[1.15fr_0.85fr] xl:grid-cols-[1.25fr_0.75fr] overflow-hidden">
+    <main
+      className="relative h-screen w-screen overflow-hidden text-slate-900"
+      style={{
+        backgroundImage: `linear-gradient(rgba(2, 132, 199, 0.28), rgba(2, 132, 199, 0.14)), url(${backgroundImg})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }}
+    >
+      <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px]" />
+      <div className="relative z-10 grid h-full w-full lg:grid-cols-[1.15fr_0.85fr] xl:grid-cols-[1.25fr_0.75fr]">
       {/* Colonne gauche (Présentation - masquée sur mobile) */}
       <div className="hidden lg:flex flex-col justify-between p-10 xl:p-12 h-screen overflow-hidden relative z-10 animate-fade-in">
         {/* Top Header */}
-        <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-sky-100/50 shadow-sm self-start">
-          <img src={logoImg} alt="Logo" className="h-7 w-auto animate-scale-in" />
-          <span className="text-base font-black tracking-tight text-slate-900">Chrono.dz</span>
+        <div className="flex items-center gap-4 bg-white/95 backdrop-blur-md px-6 py-4 rounded-[1.75rem] border border-sky-100/60 shadow-[0_18px_40px_rgba(14,165,233,0.10)] self-start min-w-[18rem]">
+          <img src={logoImg} alt="Logo" className="h-10 w-auto animate-scale-in" />
+          <span className="text-lg font-black tracking-tight text-slate-900">Laverie de la residence</span>
         </div>
 
         {/* Center Presentation - wrapped in a premium glass card displaying ONLY the main hero text */}
@@ -88,10 +99,13 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
               </>
             ) : (
               <>
-                La plateforme <span className="text-sky-600">la plus intelligente</span> pour vos réservations
+                {t("customerHeroTitle")}
               </>
             )}
           </h1>
+          <p className="text-base font-medium leading-7 text-slate-600">
+            {t("customerHeroSubtitle")}
+          </p>
         </div>
 
         <div className="h-1" />
@@ -101,14 +115,14 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
       <div
         dir={isArabic ? "rtl" : "ltr"}
         lang={language}
-        className="w-full h-screen bg-white/95 border-l border-sky-100 shadow-[0_0_80px_rgba(14,165,233,0.14)] flex flex-col justify-center p-8 sm:p-12 xl:p-16 backdrop-blur-md relative z-10 overflow-hidden"
+        className="w-full h-screen bg-white/92 border-l border-sky-100 shadow-[0_0_80px_rgba(14,165,233,0.14)] flex flex-col justify-center p-8 sm:p-12 xl:p-16 backdrop-blur-md relative z-10 overflow-hidden"
       >
         <div className="my-auto space-y-6 w-full max-w-sm mx-auto">
           {/* Logo & Header */}
           <div className="text-center space-y-3">
             <img
               src={logoImg}
-              alt="Logo Chrono.dz"
+              alt="Logo Laverie de la residence"
               className="mx-auto h-20 w-auto drop-shadow-sm transition duration-300 hover:scale-105 animate-scale-in"
             />
             <div className="space-y-1">
@@ -203,6 +217,7 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
             </button>
           </form>
         </div>
+      </div>
       </div>
     </main>
   );

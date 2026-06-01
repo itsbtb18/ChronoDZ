@@ -75,10 +75,10 @@ export function AdminCustomerAccountForm({
   };
 
   return (
-    <div className={fullPage ? "min-h-screen bg-[radial-gradient(circle_at_top,_#e0f2fe,_#ffffff_45%,_#f8fbff_100%)] px-4 py-6 text-slate-900 sm:px-6 lg:px-8" : "text-slate-900"}>
-      <div className={fullPage ? "mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]" : "grid gap-6 xl:grid-cols-[1.05fr_0.95fr]"}>
-        <section className={fullPage ? "rounded-[2rem] border border-sky-100 bg-white/90 p-5 shadow-[0_30px_90px_rgba(14,165,233,0.14)] backdrop-blur sm:p-8" : "rounded-[2rem] border border-sky-100 bg-white p-5 shadow-[0_30px_90px_rgba(14,165,233,0.10)] sm:p-8"}>
-          <div className="mb-6 space-y-2">
+    <div className={fullPage ? "h-screen w-screen bg-[radial-gradient(circle_at_top,_#e0f2fe,_#ffffff_45%,_#f8fbff_100%)] text-slate-900 overflow-hidden" : "text-slate-900"}>
+      <div className={fullPage ? "grid h-full w-full gap-0 lg:grid-cols-[1.05fr_0.95fr]" : "grid gap-6 xl:grid-cols-[1.05fr_0.95fr]"}>
+        <section className={fullPage ? "border-r border-sky-100 bg-white/90 backdrop-blur overflow-y-auto" : "rounded-[2rem] border border-sky-100 bg-white p-5 shadow-[0_30px_90px_rgba(14,165,233,0.10)] sm:p-8"}>
+          <div className={fullPage ? "p-8 space-y-2" : "mb-6 space-y-2"}>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-sky-500">
               Admin assistant
             </p>
@@ -164,8 +164,8 @@ export function AdminCustomerAccountForm({
           </div>
         </section>
 
-        <section className={fullPage ? "rounded-[2rem] border border-sky-100 bg-white/90 p-5 shadow-[0_30px_90px_rgba(14,165,233,0.14)] backdrop-blur sm:p-8" : "rounded-[2rem] border border-sky-100 bg-white p-5 shadow-[0_30px_90px_rgba(14,165,233,0.10)] sm:p-8"}>
-          <div className="mb-5">
+        <section className={fullPage ? "bg-white/90 backdrop-blur overflow-y-auto" : "rounded-[2rem] border border-sky-100 bg-white p-5 shadow-[0_30px_90px_rgba(14,165,233,0.10)] sm:p-8"}>
+          <div className={fullPage ? "p-8 mb-5" : "mb-5"}>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-sky-500">
               Aperçu ticket
             </p>
