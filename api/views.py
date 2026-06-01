@@ -33,6 +33,7 @@ from .models import (
     ResourceStatus,
     SystemConfig,
     UserRole,
+    normalize_phone,
 )
 from .serializers import (
     BookingReceiptSerializer,
@@ -54,6 +55,18 @@ WEEKDAY_COUNT = 7
 WORKING_DAY_SLOT_COUNT = int(
     (CLOSING_TIME.hour * 60 - OPENING_TIME.hour * 60) / DEFAULT_SLOT_STEP_MINUTES
 )
+
+
+class IsStaffUser(permissions.BasePermission):
+    """Authenticated establishment staff (admin or super admin)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "role", None)
+            in {UserRole.ADMIN, UserRole.SUPER_ADMIN}
+        )
 
 
 class IsSuperAdmin(permissions.BasePermission):
@@ -220,6 +233,51 @@ class CustomUserViewSet(viewsets.ModelViewSet):
             headers.setdefault("Location", ticket_path)
 
         return Response(data, status=201, headers=headers)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="resolve-login-qr",
+        permission_classes=[IsAuthenticated, IsStaffUser],
+    )
+    def resolve_login_qr(self, request):
+        """Resolve a creation-ticket LOGIN QR to a customer record for staff navigation."""
+        qr_text = request.data.get("qr_text")
+        if qr_text:
+            raw = str(qr_text).strip()
+            if not raw.startswith("LOGIN:"):
+                raise ValidationError(
+                    {"qr_text": "Format de QR non reconnu. Attendu: LOGIN:telephone:code."}
+                )
+            parts = raw.split(":")
+            phone = normalize_phone(parts[1] if len(parts) > 1 else "")
+            secret_code = parts[2] if len(parts) > 2 else ""
+        else:
+            phone, secret_code = extract_login_payload(request.data)
+
+        if not phone or not secret_code:
+            raise ValidationError(
+                {"detail": "Numéro de téléphone et code secret requis."}
+            )
+
+        try:
+            user = CustomUser.objects.get(phone=phone, role=UserRole.CUSTOMER)
+        except CustomUser.DoesNotExist:
+            return Response({"detail": "Client introuvable."}, status=404)
+
+        if not user.check_secret_code(secret_code):
+            return Response({"detail": "Code secret invalide."}, status=401)
+
+        return Response(
+            {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "phone": user.phone,
+                "detail_url": f"/admin/dashboard/customers/{user.id}",
+            },
+            status=200,
+        )
 
     def perform_update(self, serializer):
         previous_instance = self.get_object()

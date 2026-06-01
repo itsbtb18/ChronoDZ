@@ -8,9 +8,14 @@ export type ParsedWhatsAppQr =
 type WhatsAppQrScannerProps = {
   onScan: (payload: ParsedWhatsAppQr) => void;
   onStatusChange?: (status: string) => void;
+  instruction?: string;
 };
 
-export function WhatsAppQrScanner({ onScan, onStatusChange }: WhatsAppQrScannerProps) {
+export function WhatsAppQrScanner({
+  onScan,
+  onStatusChange,
+  instruction,
+}: WhatsAppQrScannerProps) {
   const containerId = useId().replace(/:/g, "-");
   const [isSupported, setIsSupported] = useState(true);
 
@@ -67,7 +72,9 @@ export function WhatsAppQrScanner({ onScan, onStatusChange }: WhatsAppQrScannerP
   return (
     <div className="space-y-3">
       <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4 text-sm leading-6 text-slate-600">
-        {isSupported ? "Placez le QR code WhatsApp devant la caméra de la tablette." : "La caméra n'est pas disponible dans cet environnement."}
+        {isSupported
+          ? instruction || "Placez le QR code WhatsApp devant la caméra de la tablette."
+          : "La caméra n'est pas disponible dans cet environnement."}
       </div>
       <div id={containerId} className="overflow-hidden rounded-[1.5rem] border border-sky-100 bg-white shadow-inner" />
     </div>

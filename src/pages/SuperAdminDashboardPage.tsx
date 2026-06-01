@@ -209,7 +209,13 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   };
 
   const openCreateAssistant = () => {
-    setAssistantForm({ phone: "", first_name: "", last_name: "", establishment: establishments[0] ? String(establishments[0].id) : "", secret_code: randomSecretCode() });
+    setAssistantForm({
+      phone: "",
+      first_name: "",
+      last_name: "",
+      establishment: establishments[0] ? String(establishments[0].id) : "",
+      secret_code: "",
+    });
     setAssistantModalMode("create");
   };
 
@@ -236,11 +242,17 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   };
 
   const saveAssistant = async () => {
+    const secretCode = assistantForm.secret_code.trim();
+    if (assistantModalMode === "create" && !secretCode) {
+      setError(t("secretCodeRequired"));
+      return;
+    }
+
     const payload: Record<string, unknown> = {
       phone: assistantForm.phone.trim(), first_name: assistantForm.first_name.trim(), last_name: assistantForm.last_name.trim(),
       establishment: Number(assistantForm.establishment), role: "ADMIN",
     };
-    if (assistantForm.secret_code.trim()) payload.secret_code = assistantForm.secret_code.trim();
+    if (secretCode) payload.secret_code = secretCode;
     const endpoint = assistantModalMode === "edit" && assistantForm.id ? `/api/superadmin/assistants/${assistantForm.id}/` : "/api/superadmin/assistants/";
     try {
       await superAdminFetch(endpoint, { method: assistantModalMode === "edit" ? "PUT" : "POST", body: JSON.stringify(payload) });
@@ -263,8 +275,22 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   };
 
   const resetAssistantPassword = (mgr: Assistant) => {
+    if (
+      !window.confirm(
+        "Générer un nouveau code secret ? Il ne sera appliqué qu'après avoir cliqué sur Enregistrer."
+      )
+    ) {
+      return;
+    }
     const newCode = randomSecretCode();
-    setAssistantForm({ id: mgr.id, phone: mgr.phone, first_name: mgr.first_name, last_name: mgr.last_name, establishment: mgr.establishment ? String(mgr.establishment) : "", secret_code: newCode });
+    setAssistantForm({
+      id: mgr.id,
+      phone: mgr.phone,
+      first_name: mgr.first_name,
+      last_name: mgr.last_name,
+      establishment: mgr.establishment ? String(mgr.establishment) : "",
+      secret_code: newCode,
+    });
     setAssistantModalMode("edit");
   };
 
@@ -822,7 +848,32 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
               onChange={(v) => setAssistantForm((s) => ({ ...s, establishment: v }))}
               options={establishments.map((e) => ({ label: e.name, value: String(e.id) }))}
             />
-            <TextInput label={t("newPassword")} value={assistantForm.secret_code} onChange={(v) => setAssistantForm((s) => ({ ...s, secret_code: v }))} placeholder="123456" />
+            <div className="space-y-2">
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <TextInput
+                    label={t("newPassword")}
+                    value={assistantForm.secret_code}
+                    onChange={(v) => setAssistantForm((s) => ({ ...s, secret_code: v }))}
+                    placeholder="6 chiffres"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAssistantForm((s) => ({ ...s, secret_code: randomSecretCode() }))
+                  }
+                  className="mb-0.5 shrink-0 rounded-2xl border border-slate-200 bg-slate-900 px-4 py-3 text-xs font-bold text-white transition hover:bg-slate-800 cursor-pointer"
+                >
+                  {t("generateCode")}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                {assistantModalMode === "edit"
+                  ? "Laissez vide pour garder le code actuel. Remplissez ou générez un code puis Enregistrer pour le changer."
+                  : "Saisissez le code souhaité (ex. 000000) ou cliquez sur Générer."}
+              </p>
+            </div>
             {assistantForm.secret_code && (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
                 {t("newCodeGenerated")}: <span className="font-bold tracking-widest">{assistantForm.secret_code}</span>

@@ -68,6 +68,7 @@ type Customer = {
   role: string;
   date_joined: string;
   secret_code_preview?: string;
+  secret_code_plain?: string;
 };
 
 type Resource = {
@@ -202,6 +203,9 @@ export function AdminAssistantPage({
   const [createPhone, setCreatePhone] = useState("");
   const [createSecretCode, setCreateSecretCode] = useState("");
   const [creatingAccount, setCreatingAccount] = useState(false);
+  const [clientQrScannerOpen, setClientQrScannerOpen] = useState(false);
+  const [resolvingClientQr, setResolvingClientQr] = useState(false);
+  const clientQrScanHandledRef = useRef(false);
 
   // Tab 3: Calendar State
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -548,13 +552,84 @@ export function AdminAssistantPage({
     };
   }, [isTicketRoute, ticketCustomerId, navigationState?.receipt]);
 
-  // Handle WhatsApp QR Scan
-  const handleScan = (payload: ParsedWhatsAppQr) => {
-    if (payload.kind === "booking-validation") {
-      setSearchBookingQuery(payload.bookingId);
-      navigate(ADMIN_TAB_PATHS.validation, { replace: true });
-      showSuccess(t("scanDetected"));
-    }
+  // Handle booking QR scan (validation tab)
+  const handleScan = useCallback(
+    (payload: ParsedWhatsAppQr) => {
+      if (payload.kind === "booking-validation") {
+        setSearchBookingQuery(payload.bookingId);
+        navigate(ADMIN_TAB_PATHS.validation, { replace: true });
+        showSuccess(t("scanDetected"));
+      }
+    },
+    [navigate, t]
+  );
+
+  const handleClientLoginQrScan = useCallback(
+    async (payload: ParsedWhatsAppQr) => {
+      if (clientQrScanHandledRef.current) {
+        return;
+      }
+
+      if (payload.kind === "booking-validation") {
+        showError("Ce QR correspond à un rendez-vous. Utilisez l'onglet Rendez-vous.");
+        return;
+      }
+
+      if (payload.kind !== "login") {
+        showError(t("unknownQrFormat"));
+        return;
+      }
+
+      clientQrScanHandledRef.current = true;
+      setResolvingClientQr(true);
+      try {
+        const response = await fetch("/api/users/resolve-login-qr/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeader(),
+          },
+          body: JSON.stringify({
+            qr_text: payload.rawText,
+            phone: payload.phone,
+            secret_code: payload.secretCode,
+          }),
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(
+            (err as { detail?: string }).detail || "Impossible d'identifier le client."
+          );
+        }
+
+        const data = (await response.json()) as {
+          id: number;
+          detail_url?: string;
+        };
+        setClientQrScannerOpen(false);
+        navigate(data.detail_url || `/admin/dashboard/customers/${data.id}`);
+        showSuccess("Client identifié — ouverture de la fiche.");
+      } catch (errorValue) {
+        clientQrScanHandledRef.current = false;
+        showError(
+          errorValue instanceof Error ? errorValue.message : "Erreur lors du scan."
+        );
+      } finally {
+        setResolvingClientQr(false);
+      }
+    },
+    [navigate, t]
+  );
+
+  const openClientQrScanner = () => {
+    clientQrScanHandledRef.current = false;
+    setClientQrScannerOpen(true);
+  };
+
+  const closeClientQrScanner = () => {
+    clientQrScanHandledRef.current = false;
+    setClientQrScannerOpen(false);
   };
 
   // Generate 15-minute slots from 08:00 to 22:00
@@ -1007,11 +1082,11 @@ export function AdminAssistantPage({
       clientFirstName: ticketCustomer.first_name,
       clientLastName: ticketCustomer.last_name,
       clientPhone: ticketCustomer.phone,
-      secretCode: ticketCustomer.secret_code_preview || null,
+      secretCode: ticketCustomer.secret_code_plain || ticketCustomer.secret_code_preview || null,
       totalPrice: "0",
       paymentStatus: "NOT_APPLICABLE",
       paymentStatusLabel: "Compte créé",
-      qrText: `LOGIN:${ticketCustomer.phone}:${ticketCustomer.secret_code_preview || ""}`,
+      qrText: `LOGIN:${ticketCustomer.phone}:${ticketCustomer.secret_code_plain || ticketCustomer.secret_code_preview || ""}`,
       createdAt: new Date().toISOString(),
     };
   }, [establishmentName, initialTicketReceipt, ticketCustomer]);
@@ -1241,6 +1316,7 @@ export function AdminAssistantPage({
                   {/* Integrated QR Scanner Button */}
                   <button
                     type="button"
+                    onClick={openClientQrScanner}
                     aria-label="Scanner QR"
                     title="Scanner le code QR du client"
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white shadow-md transition-all duration-200 hover:scale-105 hover:bg-slate-800 active:scale-95 cursor-pointer"
@@ -1969,6 +2045,51 @@ export function AdminAssistantPage({
         </div>
       </div>
     )}
+
+      {/* ── Client creation ticket QR scanner ── */}
+      {clientQrScannerOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={closeClientQrScanner}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Scanner le ticket client"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-lg overflow-hidden rounded-[2rem] border border-sky-100 bg-white p-6 shadow-[0_30px_90px_rgba(15,23,42,0.24)]"
+          >
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Scanner le ticket client</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Autorisez la caméra, puis présentez le QR du ticket de création.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeClientQrScanner}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                aria-label="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {resolvingClientQr ? (
+              <div className="py-10 text-center text-sm font-medium text-slate-500">
+                Identification du client…
+              </div>
+            ) : (
+              <WhatsAppQrScanner
+                instruction="Présentez le QR du ticket de création devant la caméra."
+                onScan={handleClientLoginQrScan}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Manual Booking Creation Modal ── */}
       {selectedSlotForBooking && (
