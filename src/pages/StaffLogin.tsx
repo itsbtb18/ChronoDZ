@@ -25,6 +25,8 @@ type StaffLoginResponse = {
   establishment_name?: string | null;
   user_id: number;
   phone: string;
+  first_name?: string;
+  last_name?: string;
 };
 
 export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
@@ -89,6 +91,8 @@ export function StaffLogin({ language, onChangeLanguage }: StaffLoginProps) {
         establishmentName: data.establishment_name ?? null,
         userId: data.user_id,
         phone: data.phone,
+        firstName: data.first_name ?? "",
+        lastName: data.last_name ?? "",
       });
 
       if (data.role === "SUPER_ADMIN") {

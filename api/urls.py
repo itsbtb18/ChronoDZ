@@ -15,6 +15,7 @@ from .views import (
     SuperAdminHistoryAPIView,
     SuperAdminManagerViewSet,
     SuperAdminStatsAPIView,
+    SuperAdminSuperAdminsViewSet,
     SystemConfigAPIView,
 )
 from .whatsapp_internal_views import (
@@ -40,6 +41,9 @@ superadmin_router.register(
 )
 superadmin_router.register(
     r"assistants", SuperAdminManagerViewSet, basename="superadmin-assistant"
+)
+superadmin_router.register(
+    r"super-admins", SuperAdminSuperAdminsViewSet, basename="superadmin-superadmins"
 )
 
 

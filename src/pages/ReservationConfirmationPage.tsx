@@ -3,8 +3,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { authHeader, clearAuthSession, getAuthSession } from "../auth/session";
+import { ClientBrandPanel } from "../components/ClientBrandPanel";
 import type { AppLanguage } from "../i18n";
-import logoImg from "../assets/logo.png";
 import baridiImg from "../assets/baridi.png";
 import cashImg from "../assets/cash.png";
 
@@ -342,25 +342,10 @@ export function ReservationConfirmationPage() {
       <div className="relative z-10 flex min-h-screen w-full items-stretch justify-stretch">
         <section className="flex w-full bg-white/80 shadow-[0_30px_110px_rgba(15,23,42,0.12)] backdrop-blur-2xl">
           <div className="grid w-full lg:min-h-screen lg:grid-cols-[0.92fr_1.08fr]">
-            <aside className="relative min-h-[38vh] overflow-hidden bg-gradient-to-br from-cyan-500 via-sky-600 to-blue-700 px-4 py-5 text-white sm:px-7 sm:py-6 lg:min-h-screen lg:px-9">
-              <div className="absolute inset-0 opacity-30">
-                <div className="absolute -left-24 top-10 h-60 w-60 rounded-full bg-white/25 blur-3xl" />
-                <div className="absolute bottom-0 right-0 h-72 w-72 rounded-full bg-sky-300/25 blur-3xl" />
-              </div>
-
-              <div className="relative flex h-full flex-col justify-between gap-6 sm:gap-8">
-                <div className="inline-flex w-fit max-w-full items-center gap-2.5 rounded-[1.25rem] border border-white/20 bg-white px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.14)] sm:gap-3 sm:rounded-[1.5rem] sm:px-5 sm:py-4">
-                  <img src={logoImg} alt="Logo Laverie de la residence" className="h-10 w-auto sm:h-12" />
-                  <span className="text-sm font-black tracking-tight text-slate-900">Laverie de la residence</span>
-                </div>
-
-                <div className="space-y-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.45em] text-sky-50/90">{t("confirmationPage")}</p>
-                  <h1 className="max-w-[14ch] text-4xl font-black leading-[0.95] sm:text-5xl lg:text-6xl">
-                    {confirmedBooking ? t("bookingConfirmed") : t("bookingConfirmTitle")}
-                  </h1>
-                </div>
-
+            <ClientBrandPanel
+              className="lg:min-h-screen"
+              eyebrow={t("confirmationPage")}
+              footer={
                 <div className="grid gap-3 rounded-[1.75rem] border border-white/15 bg-white/10 p-5 shadow-[0_18px_50px_rgba(2,132,199,0.18)] backdrop-blur-xl">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-white">{t("bookingDetailsMode")}</span>
@@ -375,8 +360,8 @@ export function ReservationConfirmationPage() {
                     <span className="text-sm font-black text-white">{confirmation?.total_price ?? confirmedBooking?.total_price ?? "-"} DA</span>
                   </div>
                 </div>
-              </div>
-            </aside>
+              }
+            />
 
             <div className="flex min-h-0 flex-col px-4 py-5 sm:px-8 sm:py-6 lg:px-10 lg:py-10">
               <div className="mb-5 flex items-center justify-between gap-4 sm:mb-6">

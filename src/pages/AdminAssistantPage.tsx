@@ -319,9 +319,13 @@ export function AdminAssistantPage({
   const [loadingMachines, setLoadingMachines] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [assistantDisplayName, setAssistantDisplayName] = useState("Assistant");
+  const [resourcePendingDelete, setResourcePendingDelete] = useState<Resource | null>(null);
+  const [renamingResourceId, setRenamingResourceId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const session = getAuthSession();
   const userPhone = session?.phone || "0000000000";
+  const isSuperAdmin = session?.role === "SUPER_ADMIN";
 
   const handleLogout = () => {
     clearAuthSession();
@@ -1155,6 +1159,74 @@ export function AdminAssistantPage({
         showError("Erreur de mise à jour.");
       }
     } catch (err) {
+      showError("Erreur de réseau.");
+    } finally {
+      setLoadingMachines(false);
+    }
+  };
+
+  // ── Super-admin only: posts (resources) CRUD ──
+  const handleAddResource = async () => {
+    setLoadingMachines(true);
+    try {
+      const nextIndex = resources.length + 1;
+      const res = await fetch(`/api/resources/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader() },
+        body: JSON.stringify({ establishment: estId, label: `Poste ${nextIndex}`, status: "ACTIF" }),
+      });
+      if (res.ok) {
+        showSuccess("Poste ajouté.");
+        triggerRefresh();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        showError(body.detail || "Impossible d'ajouter le poste.");
+      }
+    } catch {
+      showError("Erreur de réseau.");
+    } finally {
+      setLoadingMachines(false);
+    }
+  };
+
+  const handleRenameResource = async (machine: Resource, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed || trimmed === machine.label) return;
+    setLoadingMachines(true);
+    try {
+      const res = await fetch(`/api/resources/${machine.id}/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeader() },
+        body: JSON.stringify({ label: trimmed }),
+      });
+      if (res.ok) {
+        showSuccess("Poste renommé.");
+        triggerRefresh();
+      } else {
+        showError("Impossible de renommer le poste.");
+      }
+    } catch {
+      showError("Erreur de réseau.");
+    } finally {
+      setLoadingMachines(false);
+    }
+  };
+
+  const handleDeleteResource = async (machine: Resource) => {
+    setLoadingMachines(true);
+    try {
+      const res = await fetch(`/api/resources/${machine.id}/`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok || res.status === 204) {
+        showSuccess("Poste supprimé.");
+        triggerRefresh();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        showError(body.detail || "Impossible de supprimer le poste.");
+      }
+    } catch {
       showError("Erreur de réseau.");
     } finally {
       setLoadingMachines(false);
@@ -2090,9 +2162,22 @@ export function AdminAssistantPage({
         {/* 4. MACHINES TAB */}
         {activeTab === "machines" && (
           <div className="space-y-6">
-            <div>
-              <h3 className="text-xl font-bold text-slate-900">{t("machinesTitle")}</h3>
-              <p className="text-xs text-slate-500">{t("machinesSubtitle")}</p>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">{t("machinesTitle")}</h3>
+                <p className="text-xs text-slate-500">{t("machinesSubtitle")}</p>
+              </div>
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  disabled={loadingMachines}
+                  onClick={handleAddResource}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-500 to-violet-600 px-5 py-2.5 text-sm font-bold text-white shadow-[0_8px_24px_rgba(99,102,241,0.25)] transition hover:-translate-y-0.5 disabled:opacity-60"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  Ajouter un poste
+                </button>
+              )}
             </div>
 
             {loadingCalendar ? (
@@ -2105,6 +2190,7 @@ export function AdminAssistantPage({
               <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                 {resources.map((res) => {
                   const isActive = res.status === "ACTIF";
+                  const isRenaming = renamingResourceId === res.id;
                   return (
                     <div
                       key={res.id}
@@ -2112,13 +2198,40 @@ export function AdminAssistantPage({
                         isActive ? "border-sky-100 bg-white" : "border-rose-100 bg-rose-50/20"
                       }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <p className="font-bold text-slate-900 text-base">{res.label}</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          {isRenaming ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                autoFocus
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { handleRenameResource(res, renameValue); setRenamingResourceId(null); }
+                                  if (e.key === "Escape") setRenamingResourceId(null);
+                                }}
+                                className="w-full rounded-lg border border-indigo-200 bg-white px-2 py-1 text-sm font-bold text-slate-900 outline-none focus:border-indigo-400"
+                              />
+                              <button type="button" onClick={() => { handleRenameResource(res, renameValue); setRenamingResourceId(null); }}
+                                className="shrink-0 rounded-lg bg-indigo-500 p-1.5 text-white hover:bg-indigo-600">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-bold text-slate-900 text-base truncate">{res.label}</p>
+                              {isSuperAdmin && (
+                                <button type="button" onClick={() => { setRenamingResourceId(res.id); setRenameValue(res.label); }}
+                                  className="shrink-0 text-slate-300 hover:text-indigo-500 transition" title="Renommer">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                </button>
+                              )}
+                            </div>
+                          )}
                           <p className="text-[10px] font-bold text-slate-400 mt-0.5">ID: {res.id}</p>
                         </div>
                         <span
-                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
                             isActive
                               ? "bg-emerald-100 text-emerald-800"
                               : "bg-rose-100 text-rose-800 animate-pulse"
@@ -2128,18 +2241,31 @@ export function AdminAssistantPage({
                         </span>
                       </div>
 
-                      <button
-                        type="button"
-                        disabled={loadingMachines}
-                        onClick={() => handleToggleMachine(res)}
-                        className={`w-full rounded-2xl py-2.5 text-xs font-bold transition cursor-pointer ${
-                          isActive
-                            ? "bg-rose-50 hover:bg-rose-100 text-rose-700"
-                            : "bg-sky-50 hover:bg-sky-100 text-sky-700"
-                        }`}
-                      >
-                        {isActive ? t("reportBroken") : t("setMachineActive")}
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={loadingMachines}
+                          onClick={() => handleToggleMachine(res)}
+                          className={`flex-1 rounded-2xl py-2.5 text-xs font-bold transition cursor-pointer ${
+                            isActive
+                              ? "bg-rose-50 hover:bg-rose-100 text-rose-700"
+                              : "bg-sky-50 hover:bg-sky-100 text-sky-700"
+                          }`}
+                        >
+                          {isActive ? t("reportBroken") : t("setMachineActive")}
+                        </button>
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            disabled={loadingMachines}
+                            onClick={() => setResourcePendingDelete(res)}
+                            title="Supprimer le poste"
+                            className="shrink-0 rounded-2xl border border-rose-200 bg-white px-3 text-rose-600 transition hover:bg-rose-50"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -2150,6 +2276,39 @@ export function AdminAssistantPage({
         </div>
       </div>
     )}
+
+      {/* ── Super-admin: delete poste confirmation ── */}
+      {resourcePendingDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setResourcePendingDelete(null)} />
+          <div className="relative z-10 w-full max-w-md rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(0,0,0,0.18)] border border-slate-100 animate-scale-in">
+            <div className="flex items-center gap-3 mb-3 text-rose-600">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 border border-rose-100">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Supprimer ce poste ?</h3>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-rose-500/80 mt-0.5">Action irréversible</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              Le poste <span className="font-bold text-slate-700">{resourcePendingDelete.label}</span> sera supprimé. Impossible si des réservations y sont déjà rattachées.
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => setResourcePendingDelete(null)} disabled={loadingMachines}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition">
+                Annuler
+              </button>
+              <button type="button"
+                onClick={async () => { const r = resourcePendingDelete; setResourcePendingDelete(null); if (r) await handleDeleteResource(r); }}
+                disabled={loadingMachines}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white hover:bg-rose-700 transition disabled:opacity-60">
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Client creation ticket QR scanner ── */}
       {clientQrScannerOpen && (

@@ -59,7 +59,7 @@ export default function App() {
     ? session.role === "ADMIN"
       ? "/admin/dashboard/creation"
       : session.role === "SUPER_ADMIN"
-        ? "/superadmin/dashboard"
+        ? "/superadmin/dashboard" // stays on /superadmin/dashboard after login
         : null
     : null;
 
@@ -112,10 +112,10 @@ export default function App() {
           <Route path="/confirmation" element={<ReservationConfirmationPage />} />
         </Route>
 
-        <Route element={<ProtectedRoute allowedRoles={["ADMIN"]} redirectTo="/staff/login" />}>
+        <Route element={<ProtectedRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]} redirectTo="/staff/login" />}>
           <Route path="/admin/dashboard" element={<Navigate to="/admin/dashboard/creation" replace />} />
           <Route path="/admin/dashboard/customers/:customerId" element={<AdminCustomerDetailPage language={language} />} />
-          <Route path="/admin/dashboard/customers/:customerId/ticket" element={<AdminAssistantPage establishmentName="Laverie de la residence" />} />
+          <Route path="/admin/dashboard/customers/:customerId/ticket" element={<AdminDashboardPage language={language} />} />
           <Route path="/admin/dashboard/*" element={<AdminDashboardPage language={language} />} />
           <Route
             path="/admin/dashboard/bookings/:bookingId"
@@ -124,10 +124,12 @@ export default function App() {
         </Route>
 
         <Route element={<ProtectedRoute allowedRoles={["SUPER_ADMIN"]} redirectTo="/staff/login" />}>
-          <Route
-            path="/superadmin/dashboard"
-            element={<SuperAdminDashboardPage language={language} />}
-          />
+          <Route path="/superadmin/dashboard"       element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/establishments"  element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/assistants"      element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/assistants/:assistantId" element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/history"         element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/settings"        element={<SuperAdminDashboardPage language={language} />} />
         </Route>
 
         <Route

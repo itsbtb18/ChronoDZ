@@ -7,6 +7,8 @@ export type AuthSession = {
   establishmentName: string | null;
   userId: number;
   phone: string;
+  firstName?: string;
+  lastName?: string;
 };
 
 const AUTH_STORAGE_KEY = "laverie-de-la-residence-auth";

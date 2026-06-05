@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { authHeader, clearAuthSession, getAuthSession } from "../auth/session";
+import { ClientBrandPanel } from "../components/ClientBrandPanel";
 import { LANGUAGE_STORAGE_KEY, type AppLanguage } from "../i18n";
 import logoImg from "../assets/logo.png";
 
@@ -860,28 +861,21 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
         <div className="flex flex-1 flex-col">
           {showDashboardHome ? (
             <section className="grid flex-1 gap-0 lg:grid-cols-[0.78fr_1.22fr] animate-scale-in">
-              <aside className="relative flex min-h-[34vh] flex-col justify-start overflow-hidden bg-gradient-to-br from-sky-600 via-sky-500 to-cyan-500 px-4 py-6 text-white sm:min-h-[40vh] sm:px-8 sm:py-8 lg:min-h-[calc(100dvh-74px)] lg:justify-start lg:px-10 lg:py-10">
-                <div className="absolute inset-0 opacity-30">
-                  <div className="absolute -left-20 top-8 h-44 w-44 rounded-full bg-white/30 blur-3xl animate-float" />
-                  <div className="absolute bottom-0 right-0 h-56 w-56 rounded-full bg-sky-300/30 blur-3xl animate-float delay-300" />
-                </div>
-                <div className="relative space-y-4 sm:space-y-5 lg:pt-2 xl:pt-6">
-                  <p className="text-xs font-semibold uppercase tracking-[0.42em] text-sky-50/90">{t("bookingDashboardClient")}</p>
-                  <h1 className="max-w-md text-[2.15rem] font-black leading-[1.05] sm:text-5xl">
-                    {t("bookingHeroTitle")}
-                  </h1>
-                </div>
-
-                <div className="relative mt-6 grid gap-4 rounded-[1.8rem] border border-white/15 bg-white/10 p-4 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:mt-8 sm:p-5 lg:mt-10 xl:mt-12">
-                  <div className="flex items-center justify-between rounded-[1.25rem] bg-white/10 px-4 py-3">
-                    <span className="font-semibold text-white">{t("bookingActiveBookings")}</span>
-                    <span className="text-xl font-black text-white">{activeBookings.length}</span>
+              <ClientBrandPanel
+                className="lg:min-h-[calc(100dvh-74px)]"
+                eyebrow={t("bookingDashboardClient")}
+                footer={
+                  <div className="grid gap-4 rounded-[1.8rem] border border-white/15 bg-white/10 p-4 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:p-5">
+                    <div className="flex items-center justify-between rounded-[1.25rem] bg-white/10 px-4 py-3">
+                      <span className="font-semibold text-white">{t("bookingActiveBookings")}</span>
+                      <span className="text-xl font-black text-white">{activeBookings.length}</span>
+                    </div>
+                    <div className="rounded-[1.25rem] bg-white/10 px-4 py-3 text-sm leading-6 text-sky-50/90">
+                      {t("bookingTopHint")}
+                    </div>
                   </div>
-                  <div className="rounded-[1.25rem] bg-white/10 px-4 py-3 text-sm leading-6 text-sky-50/90">
-                    {t("bookingTopHint")}
-                  </div>
-                </div>
-              </aside>
+                }
+              />
 
                 <div className="flex flex-col px-4 py-5 sm:px-6 sm:py-8 lg:px-8 animate-fade-in-up">
                 <div className="mb-5 flex items-start justify-between gap-4">
@@ -982,35 +976,22 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
             ) : (
             <section className="flex flex-1 items-stretch animate-scale-in">
               <div className="grid min-h-full w-full lg:min-h-[calc(100dvh-0px)] lg:grid-cols-[0.88fr_1.12fr]">
-                <aside className="order-2 relative flex min-h-[30vh] flex-col justify-between overflow-hidden bg-gradient-to-br from-cyan-500 via-sky-600 to-blue-700 px-4 py-5 text-white sm:min-h-[36vh] sm:px-8 sm:py-8 lg:order-1 lg:min-h-full lg:px-10">
-                  <div className="absolute inset-0 opacity-30">
-                    <div className="absolute -left-20 top-8 h-44 w-44 rounded-full bg-white/30 blur-3xl animate-float" />
-                    <div className="absolute bottom-0 right-0 h-56 w-56 rounded-full bg-sky-300/30 blur-3xl animate-float delay-300" />
-                  </div>
-                  <div className="relative flex flex-1 items-center justify-start py-2 sm:py-8 lg:py-10">
-                    <div className="space-y-4 text-left sm:space-y-5">
-                      <h1 className="max-w-[34rem] text-[2rem] font-black leading-[1.08] sm:text-5xl">
-                        <span className="block">Choisissez votre programme</span>
-                        <span className="block">de lavage</span>
-                      </h1>
-                      <p className="max-w-lg text-sm leading-6 text-sky-50/90 sm:text-base sm:leading-7">
-                        Sélectionnez un mode, puis choisissez la date et l’heure disponibles.
-                      </p>
+                <ClientBrandPanel
+                  className="order-2 lg:order-1 lg:min-h-full"
+                  footer={
+                    <div className="grid gap-3 rounded-[1.5rem] border border-white/15 bg-white/10 p-4 text-sm text-sky-50/90 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:rounded-[1.75rem] sm:p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-white">Tarif unitaire</span>
+                        <span className="text-lg font-black text-white">{selectedMode.pricePerMinute} DA / min</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-white">Durée sélectionnée</span>
+                        <span className="text-lg font-black text-white">{selectedMode.duration} min</span>
+                      </div>
+                      <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-sky-50/90">{selectedMode.description}</div>
                     </div>
-                  </div>
-
-                  <div className="relative mt-4 grid gap-3 rounded-[1.5rem] border border-white/15 bg-white/10 p-4 text-sm text-sky-50/90 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:mt-8 sm:rounded-[1.75rem] sm:p-5">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-white">Tarif unitaire</span>
-                      <span className="text-lg font-black text-white">{selectedMode.pricePerMinute} DA / min</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-white">Durée sélectionnée</span>
-                      <span className="text-lg font-black text-white">{selectedMode.duration} min</span>
-                    </div>
-                    <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-sky-50/90">{selectedMode.description}</div>
-                  </div>
-                </aside>
+                  }
+                />
 
                 <div className="order-1 flex min-h-0 flex-col px-4 py-4 pb-7 sm:px-6 sm:py-8 lg:order-2 lg:px-8 lg:py-9 animate-fade-in-up">
                   {availabilityError ? (

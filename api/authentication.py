@@ -84,6 +84,8 @@ def build_login_response(user: CustomUser) -> dict[str, object]:
         "establishment_name": user.establishment.name if user.establishment_id else None,
         "user_id": user.id,
         "phone": user.phone,
+        "first_name": user.first_name or "",
+        "last_name": user.last_name or "",
     }
 
 

@@ -162,6 +162,12 @@ class CustomUserSerializer(serializers.ModelSerializer):
             "establishment", getattr(self.instance, "establishment", None)
         )
 
+        if self.instance and self.instance.role == UserRole.SUPER_ADMIN:
+            if "secret_code" in attrs:
+                raise serializers.ValidationError(
+                    {"secret_code": "Le code secret du super admin ne peut pas être modifié."}
+                )
+
         if role == UserRole.ADMIN and establishment is None:
             raise serializers.ValidationError(
                 {
@@ -462,6 +468,7 @@ class SuperAdminBookingHistorySerializer(serializers.ModelSerializer):
             "start_time",
             "end_time",
             "status",
+            "payment_method",
             "total_price",
             "client",
             "validated_by",

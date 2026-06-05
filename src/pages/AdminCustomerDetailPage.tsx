@@ -76,6 +76,11 @@ export function AdminCustomerDetailPage({ language }: AdminCustomerDetailPagePro
   // Booking filter
   const [activeFilter, setActiveFilter] = useState<FilterKey>("ALL");
 
+  // Super-admin only: delete client
+  const isSuperAdmin = session?.role === "SUPER_ADMIN";
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   useEffect(() => {
     let active = true;
     const loadCustomer = async () => {
@@ -151,6 +156,34 @@ export function AdminCustomerDetailPage({ language }: AdminCustomerDetailPagePro
       setError(errorValue instanceof Error ? errorValue.message : t("errors.generic"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!customerId) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      // Delete the client's bookings first (FK is PROTECT), then the account.
+      for (const b of bookings) {
+        const res = await fetch(`/api/bookings/${b.id}/`, { method: "DELETE", headers: authHeader() });
+        if (!res.ok && res.status !== 204) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `Impossible de supprimer la réservation ${b.booking_reference}.`);
+        }
+      }
+      const response = await fetch(`/api/users/${customerId}/`, { method: "DELETE", headers: authHeader() });
+      if (!response.ok && response.status !== 204) {
+        const payload = await readApiErrorPayload(response);
+        throw new Error(resolveApiErrorMessage(payload, "adminGeneral", t, { status: response.status }));
+      }
+      setShowDeleteModal(false);
+      navigate("/superadmin/dashboard", { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errors.generic"));
+      setShowDeleteModal(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -288,10 +321,10 @@ export function AdminCustomerDetailPage({ language }: AdminCustomerDetailPagePro
                   <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">{error}</div>
                 )}
 
-                {/* Save only — no delete for assistant */}
-                <div className="pt-4 border-t border-sky-100/40">
+                {/* Save (everyone) + delete (super admin only) */}
+                <div className="pt-4 border-t border-sky-100/40 flex gap-3">
                   <button type="submit" disabled={saving}
-                    className="group relative w-full min-h-12 overflow-hidden rounded-xl bg-gradient-to-r from-sky-600 via-sky-500 to-cyan-500 px-5 py-3 text-xs font-bold text-white shadow-[0_14px_35px_rgba(14,165,233,0.22)] transition hover:shadow-[0_18px_45px_rgba(14,165,233,0.32)] hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer">
+                    className="group relative flex-1 min-h-12 overflow-hidden rounded-xl bg-gradient-to-r from-sky-600 via-sky-500 to-cyan-500 px-5 py-3 text-xs font-bold text-white shadow-[0_14px_35px_rgba(14,165,233,0.22)] transition hover:shadow-[0_18px_45px_rgba(14,165,233,0.32)] hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer">
                     <span className="relative z-10 flex items-center justify-center gap-2">
                       {saving ? (
                         <><div className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />Enregistrement...</>
@@ -301,6 +334,13 @@ export function AdminCustomerDetailPage({ language }: AdminCustomerDetailPagePro
                     </span>
                     <div className="absolute inset-0 bg-gradient-to-r from-sky-500 to-cyan-400 opacity-0 transition-opacity group-hover:opacity-100" />
                   </button>
+                  {isSuperAdmin && (
+                    <button type="button" onClick={() => setShowDeleteModal(true)} disabled={deleting}
+                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50/60 px-5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60 cursor-pointer">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      Supprimer
+                    </button>
+                  )}
                 </div>
               </form>
             </div>
@@ -432,6 +472,39 @@ export function AdminCustomerDetailPage({ language }: AdminCustomerDetailPagePro
           </div>
         ) : null}
       </div>
+
+      {/* Delete client confirmation (super admin) */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowDeleteModal(false)} />
+          <div className="relative z-10 w-full max-w-md rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(0,0,0,0.18)] border border-slate-100 animate-scale-in">
+            <div className="flex items-center gap-3 mb-3 text-rose-600">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 border border-rose-100">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Supprimer ce client ?</h3>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-rose-500/80 mt-0.5">Action irréversible</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              {bookings.length > 0
+                ? `Ce client possède ${bookings.length} réservation(s). Supprimer le compte supprimera aussi définitivement toutes ses réservations.`
+                : "Le compte client sera définitivement supprimé."}
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowDeleteModal(false)} disabled={deleting}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition">
+                Annuler
+              </button>
+              <button type="button" onClick={confirmDelete} disabled={deleting}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white hover:bg-rose-700 transition disabled:opacity-60">
+                {deleting ? "Suppression..." : "Supprimer définitivement"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

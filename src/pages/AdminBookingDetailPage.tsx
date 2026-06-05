@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { authHeader } from "../auth/session";
+import { authHeader, getAuthSession } from "../auth/session";
 import type { AppLanguage } from "../i18n";
 
 type Booking = {
@@ -113,6 +113,9 @@ export function AdminBookingDetailPage({ language }: AdminBookingDetailPageProps
   const [error, setError] = useState<string | null>(null);
   const [markingPaid, setMarkingPaid] = useState(false);
   const [paidSuccess, setPaidSuccess] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const isSuperAdmin = getAuthSession()?.role === "SUPER_ADMIN";
 
   useEffect(() => {
     let active = true;
@@ -152,6 +155,28 @@ export function AdminBookingDetailPage({ language }: AdminBookingDetailPageProps
       }
     } finally {
       setMarkingPaid(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!bookingId) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}/`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok || res.status === 204) {
+        backToDashboard();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.detail || "Suppression impossible.");
+        setShowDelete(false);
+      }
+    } catch {
+      setError("Erreur réseau lors de la suppression.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -222,6 +247,16 @@ export function AdminBookingDetailPage({ language }: AdminBookingDetailPageProps
                 )}
               </button>
             )}
+            {isSuperAdmin && booking && (
+              <button
+                type="button"
+                onClick={() => setShowDelete(true)}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 text-xs font-bold text-rose-700 transition hover:bg-rose-100 active:scale-95"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Supprimer
+              </button>
+            )}
             <button type="button" onClick={backToDashboard}
               className="group inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 text-xs font-bold text-white shadow-md transition hover:bg-slate-800 hover:-translate-x-0.5 active:scale-95 cursor-pointer">
               <svg className="w-4 h-4 transition group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -231,6 +266,37 @@ export function AdminBookingDetailPage({ language }: AdminBookingDetailPageProps
             </button>
           </div>
         </header>
+
+        {/* Delete confirmation modal (super admin) */}
+        {showDelete && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowDelete(false)} />
+            <div className="relative z-10 w-full max-w-md rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(0,0,0,0.18)] border border-slate-100 animate-scale-in">
+              <div className="flex items-center gap-3 mb-3 text-rose-600">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 border border-rose-100">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Supprimer définitivement ?</h3>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-rose-500/80 mt-0.5">Action irréversible</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                La réservation <span className="font-bold text-slate-700">{booking?.booking_reference}</span> sera définitivement supprimée. Pour annuler une réservation sans la supprimer, utilisez plutôt l'annulation.
+              </p>
+              <div className="mt-5 flex justify-end gap-3">
+                <button type="button" onClick={() => setShowDelete(false)} disabled={deleting}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition">
+                  Annuler
+                </button>
+                <button type="button" onClick={handleDelete} disabled={deleting}
+                  className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white hover:bg-rose-700 transition disabled:opacity-60">
+                  {deleting ? "Suppression..." : "Supprimer définitivement"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex flex-col items-center justify-center py-32 rounded-[2rem] border border-sky-100/50 bg-white/80 shadow-lg">

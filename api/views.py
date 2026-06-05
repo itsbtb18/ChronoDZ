@@ -27,6 +27,7 @@ from .models import (
     BookingStatus,
     CustomUser,
     Establishment,
+    PaymentMethod,
     Resource,
     ResourceStatus,
     SystemConfig,
@@ -117,12 +118,34 @@ class ResourceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     authentication_classes = [ChronoJWTAuthentication]
 
+    def get_permissions(self):
+        # Only the super admin can add or remove postes; staff may still
+        # read and toggle status (PATCH/PUT).
+        if self.action in ("create", "destroy"):
+            return [IsAuthenticated(), IsSuperAdmin()]
+        return [IsAuthenticated()]
+
     def get_queryset(self):
         queryset = super().get_queryset()
         establishment_id = self.request.query_params.get("establishment_id")
         if establishment_id:
             queryset = queryset.filter(establishment_id=establishment_id)
         return queryset
+
+    def destroy(self, request, *args, **kwargs):
+        from django.db.models import ProtectedError
+
+        instance = self.get_object()
+        try:
+            instance.delete()
+        except ProtectedError:
+            return Response(
+                {
+                    "detail": "Impossible de supprimer ce poste : des réservations y sont rattachées.",
+                },
+                status=400,
+            )
+        return Response(status=204)
 
 
 class CustomUserViewSet(viewsets.ModelViewSet):
@@ -134,6 +157,12 @@ class CustomUserViewSet(viewsets.ModelViewSet):
     serializer_class = CustomUserSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [ChronoJWTAuthentication]
+
+    def get_permissions(self):
+        # Only the super admin may delete a client account.
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsSuperAdmin()]
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -280,6 +309,20 @@ class BookingViewSet(viewsets.ModelViewSet):
     serializer_class = BookingSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [ChronoJWTAuthentication]
+
+    def get_permissions(self):
+        # Only the super admin may permanently delete a booking.
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsSuperAdmin()]
+        return [IsAuthenticated()]
+
+    def partial_update(self, request, *args, **kwargs):
+        # Assistants (ADMIN role) cannot set status to ANNULE — only super admin can cancel.
+        new_status = request.data.get("status")
+        if new_status == BookingStatus.ANNULE and getattr(request.user, "role", None) == UserRole.ADMIN:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Seul le super admin peut annuler une réservation.")
+        return super().partial_update(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -613,6 +656,31 @@ class SuperAdminManagerViewSet(viewsets.ModelViewSet):
         serializer.save(role=UserRole.ADMIN)
 
 
+class SuperAdminSuperAdminsViewSet(viewsets.ModelViewSet):
+    """List, create and delete super-admin accounts."""
+    serializer_class = SuperAdminManagerSerializer
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    authentication_classes = [ChronoJWTAuthentication]
+
+    def get_queryset(self):
+        return (
+            CustomUser.objects.filter(role=UserRole.SUPER_ADMIN)
+            .order_by("-date_joined")
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(role=UserRole.SUPER_ADMIN, establishment=None)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.pk == request.user.pk:
+            return Response(
+                {"detail": "Vous ne pouvez pas supprimer votre propre compte super admin."},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
 class SuperAdminHistoryAPIView(APIView):
     permission_classes = [IsAuthenticated, IsSuperAdmin]
     authentication_classes = [ChronoJWTAuthentication]
@@ -632,6 +700,7 @@ class SuperAdminHistoryAPIView(APIView):
         establishment_id = request.query_params.get("establishment_id")
         date_value = request.query_params.get("date")
         user_id = request.query_params.get("user_id")
+        kind = request.query_params.get("kind")  # payment | cash | baridimob | reservation | cancellation | maintenance
 
         if establishment_id:
             try:
@@ -643,11 +712,35 @@ class SuperAdminHistoryAPIView(APIView):
                     {"establishment_id": "Identifiant invalide."}
                 ) from exc
 
+        if kind == "payment":
+            queryset = queryset.filter(status=BookingStatus.PAYE)
+        elif kind == "cash":
+            queryset = queryset.filter(
+                status=BookingStatus.PAYE, payment_method=PaymentMethod.CASH
+            )
+        elif kind == "baridimob":
+            queryset = queryset.filter(
+                status=BookingStatus.PAYE, payment_method=PaymentMethod.BARIDIMOB
+            )
+        elif kind == "reservation":
+            queryset = queryset.filter(status=BookingStatus.EN_ATTENTE)
+        elif kind == "cancellation":
+            queryset = queryset.filter(status=BookingStatus.ANNULE)
+        elif kind == "maintenance":
+            queryset = queryset.filter(status=BookingStatus.MAINTENANCE)
+
         if user_id:
             try:
                 queryset = queryset.filter(user_id=int(user_id))
             except ValueError as exc:
                 raise ValidationError({"user_id": "Identifiant invalide."}) from exc
+
+        validated_by_id = request.query_params.get("validated_by_id")
+        if validated_by_id:
+            try:
+                queryset = queryset.filter(validated_by_id=int(validated_by_id))
+            except ValueError as exc:
+                raise ValidationError({"validated_by_id": "Identifiant invalide."}) from exc
 
         if date_value:
             try:
@@ -769,54 +862,63 @@ class SuperAdminFinancialSummaryAPIView(APIView):
         week_start = today - timedelta(days=today.weekday())  # Lundi
         month_start = today.replace(day=1)
 
-        base_qs = Booking.objects.exclude(status=BookingStatus.ANNULE)
+        # Revenue: only PAYE bookings count as real income
+        revenue_qs = Booking.objects.filter(status=BookingStatus.PAYE)
+        # Bookings count / frequency: all active (non-cancelled) reservations
+        active_qs = Booking.objects.exclude(status=BookingStatus.ANNULE).exclude(status=BookingStatus.MAINTENANCE)
 
         # ── Période : aujourd'hui / semaine / mois ──
-        today_qs = base_qs.filter(booking_date=today)
-        week_qs = base_qs.filter(booking_date__gte=week_start, booking_date__lte=today)
-        month_qs = base_qs.filter(
-            booking_date__gte=month_start, booking_date__lte=today
-        )
+        rev_today   = revenue_qs.filter(booking_date=today)
+        rev_week    = revenue_qs.filter(booking_date__gte=week_start, booking_date__lte=today)
+        rev_month   = revenue_qs.filter(booking_date__gte=month_start, booking_date__lte=today)
 
-        today_agg = today_qs.aggregate(
-            revenue=Sum("total_price"), bookings_count=Count("id")
-        )
-        week_agg = week_qs.aggregate(
-            revenue=Sum("total_price"), bookings_count=Count("id")
-        )
-        month_agg = month_qs.aggregate(
-            revenue=Sum("total_price"), bookings_count=Count("id")
-        )
+        act_today   = active_qs.filter(booking_date=today)
+        act_week    = active_qs.filter(booking_date__gte=week_start, booking_date__lte=today)
+        act_month   = active_qs.filter(booking_date__gte=month_start, booking_date__lte=today)
+
+        today_agg = {
+            "revenue":        rev_today.aggregate(s=Sum("total_price"))["s"] or Decimal("0.00"),
+            "bookings_count": act_today.aggregate(c=Count("id"))["c"] or 0,
+            "pending_count":  act_today.filter(status=BookingStatus.EN_ATTENTE).aggregate(c=Count("id"))["c"] or 0,
+        }
+        week_agg = {
+            "revenue":        rev_week.aggregate(s=Sum("total_price"))["s"] or Decimal("0.00"),
+            "bookings_count": act_week.aggregate(c=Count("id"))["c"] or 0,
+        }
+        month_agg = {
+            "revenue":        rev_month.aggregate(s=Sum("total_price"))["s"] or Decimal("0.00"),
+            "bookings_count": act_month.aggregate(c=Count("id"))["c"] or 0,
+        }
 
         # ── Par établissement ──
         establishments = Establishment.objects.all().order_by("name")
         by_establishment = []
         for est in establishments:
-            est_base = base_qs.filter(resource__establishment=est)
-            est_today = est_base.filter(booking_date=today).aggregate(
-                revenue=Sum("total_price"), count=Count("id")
-            )
-            est_week = est_base.filter(
-                booking_date__gte=week_start, booking_date__lte=today
-            ).aggregate(revenue=Sum("total_price"))
-            est_month = est_base.filter(
-                booking_date__gte=month_start, booking_date__lte=today
-            ).aggregate(revenue=Sum("total_price"))
+            est_rev   = revenue_qs.filter(resource__establishment=est)
+            est_act   = active_qs.filter(resource__establishment=est)
+
+            est_rev_today   = est_rev.filter(booking_date=today).aggregate(s=Sum("total_price"), c=Count("id"))
+            est_rev_week    = est_rev.filter(booking_date__gte=week_start, booking_date__lte=today).aggregate(s=Sum("total_price"))
+            est_rev_month   = est_rev.filter(booking_date__gte=month_start, booking_date__lte=today).aggregate(s=Sum("total_price"))
+            est_act_today   = est_act.filter(booking_date=today).aggregate(c=Count("id"))
+            est_pending_today = est_act.filter(booking_date=today, status=BookingStatus.EN_ATTENTE).aggregate(c=Count("id"))
 
             by_establishment.append(
                 {
                     "id": est.id,
                     "name": est.name,
-                    "revenue_today": est_today["revenue"] or Decimal("0.00"),
-                    "revenue_week": est_week["revenue"] or Decimal("0.00"),
-                    "revenue_month": est_month["revenue"] or Decimal("0.00"),
-                    "bookings_today": est_today["count"] or 0,
+                    "revenue_today":   est_rev_today["s"] or Decimal("0.00"),
+                    "revenue_week":    est_rev_week["s"] or Decimal("0.00"),
+                    "revenue_month":   est_rev_month["s"] or Decimal("0.00"),
+                    "bookings_today":  est_act_today["c"] or 0,
+                    "pending_today":   est_pending_today["c"] or 0,
+                    "paid_today":      est_rev_today["c"] or 0,
                 }
             )
 
-        # ── Fréquence horaire (semaine en cours) ──
+        # ── Fréquence horaire (semaine en cours, réservations actives) ──
         hourly_data = (
-            week_qs.annotate(hour=ExtractHour("start_time"))
+            act_week.annotate(hour=ExtractHour("start_time"))
             .values("hour")
             .annotate(count=Count("id"))
             .order_by("hour")
@@ -827,15 +929,13 @@ class SuperAdminFinancialSummaryAPIView(APIView):
             for h in range(OPENING_TIME.hour, CLOSING_TIME.hour)
         ]
 
-        # ── Fréquence journalière (mois en cours) ──
+        # ── Fréquence journalière (mois en cours, réservations actives) ──
         daily_data = (
-            month_qs.annotate(dow=ExtractWeekDay("booking_date"))
+            act_month.annotate(dow=ExtractWeekDay("booking_date"))
             .values("dow")
             .annotate(count=Count("id"))
             .order_by("dow")
         )
-        # Django ExtractWeekDay: 1=Dimanche … 7=Samedi
-        # Convertir vers Python weekday: 0=Lundi … 6=Dimanche
         django_dow_to_py = {2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 1: 6}
         daily_map = {
             django_dow_to_py.get(entry["dow"], 0): entry["count"]
@@ -847,21 +947,12 @@ class SuperAdminFinancialSummaryAPIView(APIView):
 
         return Response(
             {
-                "today": {
-                    "revenue": today_agg["revenue"] or Decimal("0.00"),
-                    "bookings_count": today_agg["bookings_count"] or 0,
-                },
-                "this_week": {
-                    "revenue": week_agg["revenue"] or Decimal("0.00"),
-                    "bookings_count": week_agg["bookings_count"] or 0,
-                },
-                "this_month": {
-                    "revenue": month_agg["revenue"] or Decimal("0.00"),
-                    "bookings_count": month_agg["bookings_count"] or 0,
-                },
+                "today":      today_agg,
+                "this_week":  week_agg,
+                "this_month": month_agg,
                 "by_establishment": by_establishment,
                 "hourly_frequency": hourly_frequency,
-                "daily_frequency": daily_frequency,
+                "daily_frequency":  daily_frequency,
             }
         )
 

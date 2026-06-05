@@ -10,7 +10,7 @@ import {
   validateLoginForm,
 } from "../utils/apiErrors";
 import { normalizePhoneInput } from "../utils/validation";
-import backgroundImg from "../assets/background.png";
+import { ClientBrandPanel } from "../components/ClientBrandPanel";
 import logoImg from "../assets/logo.png";
 
 type UserLoginProps = {
@@ -94,45 +94,10 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
   };
 
   return (
-    <main
-      className="relative h-screen w-screen overflow-hidden text-slate-900"
-      style={{
-        backgroundImage: `linear-gradient(rgba(2, 132, 199, 0.28), rgba(2, 132, 199, 0.14)), url(${backgroundImg})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }}
-    >
-      <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px]" />
+    <main className="relative h-screen w-screen overflow-hidden text-slate-900">
       <div className="relative z-10 grid h-full w-full lg:grid-cols-[1.15fr_0.85fr] xl:grid-cols-[1.25fr_0.75fr]">
       {/* Colonne gauche (Présentation - masquée sur mobile) */}
-      <div className="hidden lg:flex flex-col justify-between p-10 xl:p-12 h-screen overflow-hidden relative z-10 animate-fade-in">
-        {/* Top Header */}
-        <div className="flex items-center gap-4 bg-white/95 backdrop-blur-md px-6 py-4 rounded-[1.75rem] border border-sky-100/60 shadow-[0_18px_40px_rgba(14,165,233,0.10)] self-start min-w-[18rem]">
-          <img src={logoImg} alt="Logo" className="h-10 w-auto animate-scale-in" />
-          <span className="text-lg font-black tracking-tight text-slate-900">Laverie de la residence</span>
-        </div>
-
-        {/* Center Presentation - wrapped in a premium glass card displaying ONLY the main hero text */}
-        <div className="max-w-xl bg-white/92 backdrop-blur-lg rounded-[2rem] border border-sky-100/70 p-8 xl:p-10 shadow-[0_24px_60px_rgba(14,165,233,0.12)] my-auto">
-          <h1 className="text-3xl xl:text-4xl font-black text-slate-900 leading-[1.3] tracking-tight">
-            {isArabic ? (
-              <>
-                منصة الحجز <span className="text-sky-600">الأكثر ذكاءً</span> لتنظيم وقتك
-              </>
-            ) : (
-              <>
-                {t("customerHeroTitle")}
-              </>
-            )}
-          </h1>
-          <p className="text-base font-medium leading-7 text-slate-600">
-            {t("customerHeroSubtitle")}
-          </p>
-        </div>
-
-        <div className="h-1" />
-      </div>
+      <ClientBrandPanel className="hidden lg:flex" />
 
       {/* Colonne droite (Formulaire de Connexion style Sidebar Plein Écran) */}
       <div
