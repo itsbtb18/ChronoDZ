@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import random
 import re
 import string
@@ -104,9 +105,24 @@ class Establishment(models.Model):
     name = models.CharField(max_length=255, verbose_name="Nom")
     address = models.CharField(max_length=255, verbose_name="Adresse")
     city = models.CharField(max_length=120, verbose_name="Ville")
+    opening_time = models.TimeField(
+        default=datetime.time(8, 0),
+        verbose_name="Heure d'ouverture",
+    )
+    closing_time = models.TimeField(
+        default=datetime.time(22, 0),
+        verbose_name="Heure de fermeture",
+    )
     created_at = models.DateTimeField(
         auto_now_add=True, verbose_name="Date de création"
     )
+
+    def clean(self):
+        super().clean()
+        if self.opening_time and self.closing_time and self.opening_time >= self.closing_time:
+            raise ValidationError(
+                {"closing_time": "L'heure de fermeture doit être après l'heure d'ouverture."}
+            )
 
     class Meta:
         verbose_name = "Établissement"
@@ -375,6 +391,129 @@ class Booking(models.Model):
 
     def __str__(self) -> str:
         return f"{self.booking_reference} - {self.resource.label} - {self.booking_date} {self.start_time}-{self.end_time}"
+
+
+class ModeLavage(models.Model):
+    """Mode de lavage global, réutilisable par plusieurs établissements."""
+
+    nom = models.CharField(max_length=120, verbose_name="Nom")
+    duree = models.PositiveIntegerField(verbose_name="Durée (minutes)")
+    prix_base = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Prix de base (DA)",
+    )
+    capacite_max = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        verbose_name="Capacité max (kg)",
+    )
+    types_vetements = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Types de vêtements",
+        help_text="Liste de types de vêtements pris en charge.",
+    )
+    message_guide = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Pourquoi choisir ce mode (bénéfice client)",
+    )
+    textiles_interdits = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Textiles à éviter / interdits",
+        help_text="Liste des textiles déconseillés pour ce cycle.",
+    )
+    consigne_securite = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Consigne de sécurité",
+        help_text="Ex. videz les poches, retirez le sable, etc.",
+    )
+    etablissements = models.ManyToManyField(
+        Establishment,
+        through="EtablissementMode",
+        related_name="modes_lavage",
+        blank=True,
+        verbose_name="Établissements",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Créé le")
+
+    class Meta:
+        db_table = "modes_lavage"
+        verbose_name = "Mode de lavage"
+        verbose_name_plural = "Modes de lavage"
+        ordering = ["nom"]
+        indexes = [models.Index(fields=["nom"])]
+
+    def clean(self):
+        super().clean()
+        if self.duree is not None and self.duree <= 0:
+            raise ValidationError(
+                {"duree": "La durée doit être supérieure à 0 minute."}
+            )
+
+    def __str__(self) -> str:
+        return f"{self.nom} ({self.duree} min)"
+
+
+class EtablissementMode(models.Model):
+    """Table pivot : un établissement peut activer plusieurs modes,
+    chacun avec un prix spécifique optionnel qui surcharge le prix de base.
+    """
+
+    etablissement = models.ForeignKey(
+        Establishment,
+        on_delete=models.CASCADE,
+        related_name="mode_links",
+        verbose_name="Établissement",
+    )
+    mode = models.ForeignKey(
+        ModeLavage,
+        on_delete=models.CASCADE,
+        related_name="etablissement_links",
+        verbose_name="Mode de lavage",
+    )
+    prix_specifique = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Prix spécifique (DA)",
+        help_text="Surcharge le prix de base pour cet établissement uniquement.",
+    )
+    recommande = models.BooleanField(
+        default=False,
+        verbose_name="Recommandé",
+        help_text="Un seul mode peut être recommandé par établissement.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Créé le")
+
+    class Meta:
+        db_table = "etablissement_mode"
+        verbose_name = "Mode par établissement"
+        verbose_name_plural = "Modes par établissement"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["etablissement", "mode"],
+                name="unique_etablissement_mode",
+            )
+        ]
+        indexes = [models.Index(fields=["etablissement", "mode"])]
+
+    @property
+    def prix_effectif(self) -> Decimal:
+        return (
+            self.prix_specifique
+            if self.prix_specifique is not None
+            else self.mode.prix_base
+        )
+
+    def __str__(self) -> str:
+        return f"{self.etablissement.name} · {self.mode.nom}"
 
 
 class SystemConfig(models.Model):

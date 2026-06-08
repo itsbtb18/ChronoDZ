@@ -27,6 +27,8 @@ from .models import (
     BookingStatus,
     CustomUser,
     Establishment,
+    EtablissementMode,
+    ModeLavage,
     PaymentMethod,
     Resource,
     ResourceStatus,
@@ -39,6 +41,8 @@ from .serializers import (
     BookingSerializer,
     CustomUserSerializer,
     EstablishmentSerializer,
+    EtablissementModeSerializer,
+    ModeLavageSerializer,
     ResourceSerializer,
     SuperAdminBookingHistorySerializer,
     SuperAdminManagerSerializer,
@@ -55,6 +59,23 @@ WEEKDAY_COUNT = 7
 WORKING_DAY_SLOT_COUNT = int(
     (CLOSING_TIME.hour * 60 - OPENING_TIME.hour * 60) / DEFAULT_SLOT_STEP_MINUTES
 )
+
+
+def _minutes(t: time) -> int:
+    return t.hour * 60 + t.minute
+
+
+def _working_day_slot_count(opening: time, closing: time) -> int:
+    """Nombre de créneaux (pas de 15 min) sur une journée de travail."""
+    span = _minutes(closing) - _minutes(opening)
+    return max(int(span / DEFAULT_SLOT_STEP_MINUTES), 0)
+
+
+def _establishment_hours(establishment) -> tuple[time, time]:
+    """Heures d'ouverture/fermeture de l'établissement (avec repli sur les valeurs par défaut)."""
+    opening = getattr(establishment, "opening_time", None) or OPENING_TIME
+    closing = getattr(establishment, "closing_time", None) or CLOSING_TIME
+    return opening, closing
 
 
 class IsStaffUser(permissions.BasePermission):
@@ -106,6 +127,36 @@ class EstablishmentViewSet(viewsets.ModelViewSet):
     serializer_class = EstablishmentSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [ChronoJWTAuthentication]
+
+    @action(detail=True, methods=["get"], url_path="modes")
+    def modes(self, request, pk=None):
+        """Liste les modes de lavage activés pour cet établissement,
+        avec le prix effectif (prix_specifique ou prix_base).
+        Utilisé par la page de réservation côté client.
+        """
+        establishment = self.get_object()
+        links = (
+            EtablissementMode.objects.filter(etablissement=establishment)
+            .select_related("mode")
+            .order_by("-recommande", "mode__duree", "mode__nom")
+        )
+        data = [
+            {
+                "id": link.mode_id,
+                "nom": link.mode.nom,
+                "duree": link.mode.duree,
+                "prix_base": link.mode.prix_base,
+                "prix_effectif": link.prix_effectif,
+                "capacite_max": link.mode.capacite_max,
+                "types_vetements": link.mode.types_vetements,
+                "message_guide": link.mode.message_guide,
+                "textiles_interdits": link.mode.textiles_interdits,
+                "consigne_securite": link.mode.consigne_securite,
+                "recommande": link.recommande,
+            }
+            for link in links
+        ]
+        return Response(data)
 
 
 class ResourceViewSet(viewsets.ModelViewSet):
@@ -381,10 +432,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 {"detail": "Les paramètres date et establishment_id sont obligatoires."}
             )
 
-        if duration not in {15, 30, 45, 60}:
-            raise ValidationError(
-                {"duration": "La durée doit être 15, 30, 45 ou 60 minutes."}
-            )
+        if duration <= 0:
+            raise ValidationError({"duration": "La durée doit être supérieure à 0 minute."})
 
         try:
             booking_date = datetime.strptime(date_value, "%Y-%m-%d").date()
@@ -392,10 +441,23 @@ class BookingViewSet(viewsets.ModelViewSet):
         except ValueError as exc:
             raise ValidationError({"detail": "Paramètres invalides."}) from exc
 
+        try:
+            establishment = Establishment.objects.get(pk=establishment_id_int)
+        except Establishment.DoesNotExist as exc:
+            raise ValidationError({"establishment_id": "Établissement introuvable."}) from exc
+
+        opening_time, closing_time = _establishment_hours(establishment)
+
+        max_duration = _minutes(closing_time) - _minutes(opening_time)
+        if duration > max_duration:
+            raise ValidationError(
+                {"duration": f"La durée ne peut pas dépasser {max_duration} minutes (heures d'ouverture)."}
+            )
+
         active_resources = _active_resources_count(establishment_id_int)
         slots = []
-        current_start = datetime.combine(booking_date, OPENING_TIME)
-        last_start = datetime.combine(booking_date, CLOSING_TIME) - timedelta(
+        current_start = datetime.combine(booking_date, opening_time)
+        last_start = datetime.combine(booking_date, closing_time) - timedelta(
             minutes=duration
         )
 
@@ -438,8 +500,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "date": booking_date,
                 "establishment_id": establishment_id_int,
                 "duration": duration,
-                "opening_time": OPENING_TIME.strftime("%H:%M"),
-                "closing_time": CLOSING_TIME.strftime("%H:%M"),
+                "opening_time": opening_time.strftime("%H:%M"),
+                "closing_time": closing_time.strftime("%H:%M"),
                 "total_resources": active_resources,
                 "slots": slots,
             }
@@ -467,10 +529,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        if duration not in {15, 30, 45, 60}:
-            raise ValidationError(
-                {"duration": "La durée doit être 15, 30, 45 ou 60 minutes."}
-            )
+        if duration <= 0:
+            raise ValidationError({"duration": "La durée doit être supérieure à 0 minute."})
 
         try:
             start_date = datetime.strptime(start_value, "%Y-%m-%d").date()
@@ -482,6 +542,18 @@ class BookingViewSet(viewsets.ModelViewSet):
         if start_date > end_date:
             raise ValidationError(
                 {"detail": "Le paramètre start doit être antérieur ou égal à end."}
+            )
+
+        try:
+            establishment = Establishment.objects.get(pk=establishment_id_int)
+        except Establishment.DoesNotExist as exc:
+            raise ValidationError({"establishment_id": "Établissement introuvable."}) from exc
+
+        opening_time, closing_time = _establishment_hours(establishment)
+        max_duration = _minutes(closing_time) - _minutes(opening_time)
+        if duration > max_duration:
+            raise ValidationError(
+                {"duration": f"La durée ne peut pas dépasser {max_duration} minutes (heures d'ouverture)."}
             )
 
         active_resources = _active_resources_count(establishment_id_int)
@@ -509,8 +581,8 @@ class BookingViewSet(viewsets.ModelViewSet):
         while current_date <= end_date:
             date_key = current_date.isoformat()
             slots = []
-            current_start = datetime.combine(current_date, OPENING_TIME)
-            last_start = datetime.combine(current_date, CLOSING_TIME) - timedelta(
+            current_start = datetime.combine(current_date, opening_time)
+            last_start = datetime.combine(current_date, closing_time) - timedelta(
                 minutes=duration
             )
 
@@ -552,8 +624,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "date": current_date,
                 "establishment_id": establishment_id_int,
                 "duration": duration,
-                "opening_time": OPENING_TIME.strftime("%H:%M"),
-                "closing_time": CLOSING_TIME.strftime("%H:%M"),
+                "opening_time": opening_time.strftime("%H:%M"),
+                "closing_time": closing_time.strftime("%H:%M"),
                 "total_resources": active_resources,
                 "slots": slots,
             }
@@ -630,6 +702,40 @@ class SuperAdminEstablishmentViewSet(viewsets.ModelViewSet):
     serializer_class = EstablishmentSerializer
     permission_classes = [IsAuthenticated, IsSuperAdmin]
     authentication_classes = [ChronoJWTAuthentication]
+
+
+class SuperAdminModeLavageViewSet(viewsets.ModelViewSet):
+    """CRUD complet des modes de lavage globaux (Super Admin)."""
+
+    queryset = ModeLavage.objects.all().order_by("nom")
+    serializer_class = ModeLavageSerializer
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    authentication_classes = [ChronoJWTAuthentication]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(nom__icontains=search)
+        return queryset
+
+    @action(detail=True, methods=["get", "post"], url_path="establishments")
+    def establishments(self, request, pk=None):
+        """GET: liste les liens établissement↔mode.
+        POST: attache un établissement au mode avec un prix spécifique optionnel.
+        """
+        mode = self.get_object()
+
+        if request.method == "GET":
+            links = mode.etablissement_links.select_related("etablissement").all()
+            return Response(EtablissementModeSerializer(links, many=True).data)
+
+        serializer = EtablissementModeSerializer(
+            data={**request.data, "mode": mode.id}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=201)
 
 
 class SuperAdminManagerViewSet(viewsets.ModelViewSet):
@@ -773,9 +879,13 @@ class SuperAdminStatsAPIView(APIView):
                 status=ResourceStatus.ACTIF,
             ).count()
 
-            total_week_slots = active_resources * WEEKDAY_COUNT * WORKING_DAY_SLOT_COUNT
+            opening_time, closing_time = _establishment_hours(establishment)
+            slots_per_day = _working_day_slot_count(opening_time, closing_time)
+
+            total_week_slots = active_resources * WEEKDAY_COUNT * slots_per_day
             occupied_slots = self._count_occupied_slots(
-                establishment.id, week_start, week_end, active_resources
+                establishment.id, week_start, week_end, active_resources,
+                opening_time, closing_time,
             )
             saturation_percentage = (
                 (Decimal(occupied_slots) / Decimal(total_week_slots) * Decimal("100"))
@@ -805,7 +915,8 @@ class SuperAdminStatsAPIView(APIView):
         return Response(payload)
 
     def _count_occupied_slots(
-        self, establishment_id: int, week_start, week_end, active_resources: int
+        self, establishment_id: int, week_start, week_end, active_resources: int,
+        opening_time: time = OPENING_TIME, closing_time: time = CLOSING_TIME,
     ) -> int:
         if active_resources == 0:
             return 0
@@ -823,8 +934,8 @@ class SuperAdminStatsAPIView(APIView):
         occupied_slots = 0
         for day_offset in range(WEEKDAY_COUNT):
             current_day = week_start + timedelta(days=day_offset)
-            current_start = datetime.combine(current_day, OPENING_TIME)
-            last_start = datetime.combine(current_day, CLOSING_TIME) - timedelta(
+            current_start = datetime.combine(current_day, opening_time)
+            last_start = datetime.combine(current_day, closing_time) - timedelta(
                 minutes=DEFAULT_SLOT_STEP_MINUTES
             )
 

@@ -26,7 +26,8 @@ import logoImg from "../assets/logo.png";
 
 type SuperAdminDashboardPageProps = { language: "fr" | "ar" };
 
-type Establishment = { id: number; name: string; address: string; city: string; created_at: string; machine_count?: number };
+type AssignedMode = { mode: number; nom: string; duree: number; prix_base: string | number; prix_specifique: string | number | null; prix_effectif: string | number; recommande?: boolean };
+type Establishment = { id: number; name: string; address: string; city: string; created_at: string; machine_count?: number; assigned_modes?: AssignedMode[] };
 
 type Assistant = {
   id: number; phone: string; first_name: string; last_name: string;
@@ -71,10 +72,41 @@ type SystemConfig = {
 };
 
 type ModalMode = "create" | "edit";
-type ActiveTab = "overview" | "establishments" | "assistants" | "history" | "settings";
+type ActiveTab = "overview" | "modes" | "establishments" | "assistants" | "history" | "settings";
 
+type Mode = {
+  id: number;
+  nom: string;
+  duree: number;
+  prix_base: string | number;
+  capacite_max: string | number;
+  types_vetements: string[];
+  message_guide: string;
+  textiles_interdits?: string[];
+  consigne_securite?: string;
+  establishment_count?: number;
+  created_at?: string;
+};
+
+type ModeFormState = {
+  id?: number;
+  nom: string;
+  duree: string;
+  prix_base: string;
+  capacite_max: string;
+  types_vetements: string; // saisie séparée par des virgules
+  message_guide: string;
+  textiles_interdits: string; // saisie séparée par des virgules
+  consigne_securite: string;
+};
+
+type ModeAssignment = { checked: boolean; price: string; recommande: boolean };
 type EstablishmentFormState = {
   id?: number; name: string; address: string; city: string; machine_count: number;
+  // Modes attribués à cet établissement (clé = id du mode)
+  modeAssignments: Record<number, ModeAssignment>;
+  // Assistants rattachés à cet établissement
+  assistantIds: number[];
   // Optional first assistant when creating
   withAssistant: boolean;
   assistantFirstName: string; assistantLastName: string;
@@ -93,6 +125,7 @@ const Icons = {
   settings: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   logout: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>,
   refresh: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
+  washingMachine: <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M5 3h14a1 1 0 011 1v16a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1z" /><path strokeLinecap="round" strokeLinejoin="round" d="M7 6h.01M10 6h.01" /><circle cx="12" cy="14" r="4.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M9.7 13.2c.7-.6 1.6-.6 2.3 0 .7.6 1.6.6 2.3 0" /></svg>,
   plus: <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>,
 };
 
@@ -108,6 +141,7 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   // ── Tab ↔ URL mapping ──
   const TAB_PATHS: Record<ActiveTab, string> = {
     overview:       "/superadmin/dashboard",
+    modes:          "/superadmin/modes",
     establishments: "/superadmin/establishments",
     assistants:     "/superadmin/assistants",
     history:        "/superadmin/history",
@@ -124,6 +158,7 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
     ? Number(location.pathname.split("/superadmin/assistants/")[1]) || null
     : null;
   const [establishments, setEstablishments] = useState<Establishment[]>([]);
+  const [modes, setModes] = useState<Mode[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [history, setHistory] = useState<FinancialHistoryItem[]>([]);
   const [stats, setStats] = useState<SaturationStat[]>([]);
@@ -156,10 +191,21 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   const [historyDateFilter, setHistoryDateFilter] = useState("");
   const [historyKind, setHistoryKind] = useState<HistoryKind>("all");
 
+  // Modes
+  const [modeSearch, setModeSearch] = useState("");
+  const [modeModalMode, setModeModalMode] = useState<ModalMode | null>(null);
+  const [modeForm, setModeForm] = useState<ModeFormState>({ nom: "", duree: "", prix_base: "", capacite_max: "", types_vetements: "", message_guide: "", textiles_interdits: "", consigne_securite: "" });
+  const [savingMode, setSavingMode] = useState(false);
+
   // Modals
   const [establishmentModalMode, setEstablishmentModalMode] = useState<ModalMode | null>(null);
   const [assistantModalMode, setAssistantModalMode] = useState<ModalMode | null>(null);
-  const [establishmentForm, setEstablishmentForm] = useState<EstablishmentFormState>({ name: "", address: "", city: "", machine_count: 0, withAssistant: false, assistantFirstName: "", assistantLastName: "", assistantPhone: "", assistantSecretCode: "" });
+  const [establishmentForm, setEstablishmentForm] = useState<EstablishmentFormState>({ name: "", address: "", city: "", machine_count: 0, modeAssignments: {}, assistantIds: [], withAssistant: false, assistantFirstName: "", assistantLastName: "", assistantPhone: "", assistantSecretCode: "" });
+  // Recherche dans les dropdowns d'affectation (modes & assistants) du modal établissement
+  const [modeAssignSearch, setModeAssignSearch] = useState("");
+  const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
+  const [assistantAssignSearch, setAssistantAssignSearch] = useState("");
+  const [assistantDropdownOpen, setAssistantDropdownOpen] = useState(false);
   const [assistantForm, setAssistantForm] = useState<AssistantFormState>({ phone: "", first_name: "", last_name: "", establishment: "", secret_code: "" });
 
   // Sidebar collapsed on mobile
@@ -176,8 +222,9 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
       setError(null);
 
       try {
-        const [estRes, mgrRes, histRes, statsRes, finRes, cfgRes, saRes] = await Promise.all([
+        const [estRes, modesRes, mgrRes, histRes, statsRes, finRes, cfgRes, saRes] = await Promise.all([
           superAdminFetch("/api/superadmin/establishments/", { signal: controller.signal }),
+          superAdminFetch("/api/superadmin/modes/", { signal: controller.signal }).catch(() => null),
           superAdminFetch("/api/superadmin/assistants/", { signal: controller.signal }),
           superAdminFetch("/api/superadmin/history/", { signal: controller.signal }),
           superAdminFetch("/api/superadmin/stats/", { signal: controller.signal }),
@@ -198,6 +245,7 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
         if (controller.signal.aborted) return;
 
         setEstablishments(estData ?? []);
+        if (modesRes) { const modesData = await safeJson<Mode[]>(modesRes); if (modesData) setModes(modesData); }
         setAssistants(mgrData ?? []);
         setHistory(histData ?? []);
         setStats(statsData?.results ?? []);
@@ -285,14 +333,85 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   }, [stats, overviewEstFilter]);
 
   /* ── CRUD Handlers ── */
-  const openCreateEstablishment = () => { setEstablishmentForm({ name: "", address: "", city: "", machine_count: 0, withAssistant: false, assistantFirstName: "", assistantLastName: "", assistantPhone: "", assistantSecretCode: "" }); setEstablishmentModalMode("create"); };
+  const openCreateEstablishment = () => { setModeAssignSearch(""); setAssistantAssignSearch(""); setModeDropdownOpen(false); setAssistantDropdownOpen(false); setEstablishmentForm({ name: "", address: "", city: "", machine_count: 0, modeAssignments: {}, assistantIds: [], withAssistant: false, assistantFirstName: "", assistantLastName: "", assistantPhone: "", assistantSecretCode: "" }); setEstablishmentModalMode("create"); };
   const openEditEstablishment = (est: Establishment) => {
+    const modeAssignments: Record<number, ModeAssignment> = {};
+    (est.assigned_modes ?? []).forEach((am) => {
+      modeAssignments[am.mode] = {
+        checked: true,
+        price: String(am.prix_specifique ?? am.prix_effectif ?? am.prix_base ?? ""),
+        recommande: Boolean(am.recommande),
+      };
+    });
+    const assistantIds = assistants.filter((a) => a.establishment === est.id).map((a) => a.id);
+    setModeAssignSearch(""); setAssistantAssignSearch(""); setModeDropdownOpen(false); setAssistantDropdownOpen(false);
     setEstablishmentForm({
       id: est.id, name: est.name, address: est.address, city: est.city,
       machine_count: est.machine_count ?? 0,
+      modeAssignments,
+      assistantIds,
       withAssistant: false, assistantFirstName: "", assistantLastName: "", assistantPhone: "", assistantSecretCode: "",
     });
     setEstablishmentModalMode("edit");
+  };
+
+  /* ── Mode handlers ── */
+  const openCreateMode = () => {
+    setModeForm({ nom: "", duree: "", prix_base: "", capacite_max: "", types_vetements: "", message_guide: "", textiles_interdits: "", consigne_securite: "" });
+    setModeModalMode("create");
+  };
+
+  const openEditMode = (mode: Mode) => {
+    setModeForm({
+      id: mode.id,
+      nom: mode.nom,
+      duree: String(mode.duree ?? ""),
+      prix_base: String(mode.prix_base ?? ""),
+      capacite_max: String(mode.capacite_max ?? ""),
+      types_vetements: Array.isArray(mode.types_vetements) ? mode.types_vetements.join(", ") : "",
+      message_guide: mode.message_guide ?? "",
+      textiles_interdits: Array.isArray(mode.textiles_interdits) ? mode.textiles_interdits.join(", ") : "",
+      consigne_securite: mode.consigne_securite ?? "",
+    });
+    setModeModalMode("edit");
+  };
+
+  const saveMode = async () => {
+    const nom = modeForm.nom.trim();
+    const duree = parseInt(modeForm.duree, 10);
+    if (!nom) { setError(t("modeNameRequired")); return; }
+    if (!duree || duree <= 0) { setError(t("modeDurationRequired")); return; }
+
+    const payload = {
+      nom,
+      duree,
+      prix_base: Number(modeForm.prix_base || 0),
+      capacite_max: Number(modeForm.capacite_max || 0),
+      types_vetements: modeForm.types_vetements.split(",").map((v) => v.trim()).filter(Boolean),
+      message_guide: modeForm.message_guide.trim(),
+      textiles_interdits: modeForm.textiles_interdits.split(",").map((v) => v.trim()).filter(Boolean),
+      consigne_securite: modeForm.consigne_securite.trim(),
+    };
+    const endpoint = modeModalMode === "edit" && modeForm.id
+      ? `/api/superadmin/modes/${modeForm.id}/`
+      : "/api/superadmin/modes/";
+    setSavingMode(true);
+    try {
+      await superAdminFetch(endpoint, { method: modeModalMode === "edit" ? "PUT" : "POST", body: JSON.stringify(payload) });
+      setModeModalMode(null);
+      showSuccess(modeModalMode === "edit" ? t("modeUpdated") : t("modeCreated"));
+      refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "Erreur"); }
+    finally { setSavingMode(false); }
+  };
+
+  const deleteMode = async (mode: Mode) => {
+    if (!window.confirm(t("confirmDeleteMode", { name: mode.nom }))) return;
+    try {
+      await superAdminFetch(`/api/superadmin/modes/${mode.id}/`, { method: "DELETE" });
+      setModes((prev) => prev.filter((m) => m.id !== mode.id));
+      showSuccess(t("modeDeleted"));
+    } catch (e) { setError(e instanceof Error ? e.message : "Erreur"); }
   };
 
   const openCreateAssistant = () => {
@@ -312,11 +431,20 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   };
 
   const saveEstablishment = async () => {
+    const modesPayload = Object.entries(establishmentForm.modeAssignments)
+      .filter(([, v]) => v.checked)
+      .map(([id, v]) => ({
+        mode: Number(id),
+        prix_specifique: v.price.trim() === "" ? null : Number(v.price),
+        recommande: Boolean(v.recommande),
+      }));
     const payload = {
       name: establishmentForm.name.trim(),
       address: establishmentForm.address.trim(),
       city: establishmentForm.city.trim(),
       machine_count: Number(establishmentForm.machine_count || 0),
+      modes: modesPayload,
+      assistant_ids: establishmentForm.assistantIds,
     };
     if (!payload.name || !payload.address || !payload.city) return;
     const endpoint = establishmentModalMode === "edit" && establishmentForm.id
@@ -440,6 +568,7 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
   /* ── Sidebar Tabs Config ── */
   const tabs: Array<{ key: ActiveTab; label: string; icon: React.ReactNode }> = [
     { key: "overview", label: t("overview"), icon: Icons.home },
+    { key: "modes", label: t("modes"), icon: Icons.washingMachine },
     { key: "establishments", label: t("establishments"), icon: Icons.building },
     { key: "assistants", label: t("assistants"), icon: Icons.users },
     { key: "history", label: t("auditTrail"), icon: Icons.history },
@@ -972,6 +1101,129 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
               )}
 
               {/* ──── ESTABLISHMENTS TAB ──── */}
+              {/* ──── MODES TAB ──── */}
+              {activeTab === "modes" && (() => {
+                const filteredModes = modes.filter((m) =>
+                  !modeSearch.trim() ||
+                  m.nom.toLowerCase().includes(modeSearch.toLowerCase()) ||
+                  (Array.isArray(m.types_vetements) && m.types_vetements.join(" ").toLowerCase().includes(modeSearch.toLowerCase()))
+                );
+                return (
+                <div className="space-y-4">
+                  {/* Toolbar */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative flex-1 min-w-[220px]">
+                      <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                      <input
+                        type="text"
+                        value={modeSearch}
+                        onChange={(e) => setModeSearch(e.target.value)}
+                        placeholder={t("searchModePlaceholder")}
+                        className="w-full rounded-2xl border border-sky-100 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 placeholder:text-slate-300 shadow-sm"
+                      />
+                      {modeSearch && (
+                        <button type="button" onClick={() => setModeSearch("")}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      )}
+                    </div>
+                    <p className="shrink-0 text-sm text-slate-400 font-semibold">
+                      {modeSearch ? `${filteredModes.length} / ${modes.length}` : `${modes.length} ${modes.length !== 1 ? t("modes").toLowerCase() : t("mode").toLowerCase()}`}
+                    </p>
+                    <button type="button" onClick={openCreateMode} className="shrink-0 flex items-center gap-2 rounded-2xl bg-gradient-to-r from-sky-500 to-cyan-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-200/50 hover:shadow-xl transition cursor-pointer">
+                      {Icons.plus} {t("addMode")}
+                    </button>
+                  </div>
+
+                  {modes.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-sky-200 bg-sky-50/40 p-16 text-center">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-100 text-sky-500 mb-4">{Icons.washingMachine}</div>
+                      <p className="text-sm font-bold text-slate-600">{t("noModes")}</p>
+                      <p className="text-xs text-slate-400 mt-1">{t("noModesHint")}</p>
+                    </div>
+                  ) : filteredModes.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-sky-200 bg-sky-50/40 py-16 text-center">
+                      <svg className="w-10 h-10 text-sky-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                      <p className="text-sm font-bold text-slate-500">{t("noModesFound")}</p>
+                      <p className="text-xs text-slate-400 mt-1">"<span className="font-semibold">{modeSearch}</span>"</p>
+                    </div>
+                  ) : (
+                    /* DataTable */
+                    <div className="overflow-hidden rounded-3xl border border-sky-100/80 bg-white shadow-[0_4px_20px_rgba(14,165,233,0.06)]">
+                      <div className="h-[3px] w-full bg-gradient-to-r from-sky-400 via-indigo-500 to-cyan-400" />
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50/70 text-[10px] font-black uppercase tracking-[0.15em] text-slate-400">
+                              <th className="px-5 py-3.5">{t("modeName")}</th>
+                              <th className="px-5 py-3.5 text-center">{t("modeDuration")}</th>
+                              <th className="px-5 py-3.5 text-center">{t("modePrice")}</th>
+                              <th className="px-5 py-3.5 text-center">{t("modeCapacity")}</th>
+                              <th className="px-5 py-3.5">{t("modeClothTypes")}</th>
+                              <th className="px-5 py-3.5 text-right">{t("actions")}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {filteredModes.map((mode, idx) => (
+                              <tr key={mode.id} className="group transition hover:bg-sky-50/40 animate-fade-in-up" style={{ animationDelay: `${idx * 40}ms` }}>
+                                <td className="px-5 py-4">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-50 to-cyan-50 border border-sky-100 text-sky-600 shadow-sm">
+                                      {Icons.washingMachine}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-black text-slate-900 truncate leading-tight">{mode.nom}</p>
+                                      {mode.message_guide && <p className="text-[11px] text-slate-400 mt-0.5 truncate max-w-[220px]">{mode.message_guide}</p>}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-5 py-4 text-center">
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-[11px] font-bold text-indigo-600">
+                                    {mode.duree} min
+                                  </span>
+                                </td>
+                                <td className="px-5 py-4 text-center">
+                                  <span className="text-sm font-black text-slate-900">{Number(mode.prix_base).toLocaleString("fr-FR")}</span>
+                                  <span className="text-[10px] font-bold text-slate-400 ml-1">DA</span>
+                                </td>
+                                <td className="px-5 py-4 text-center text-sm font-semibold text-slate-600">
+                                  {Number(mode.capacite_max)} kg
+                                </td>
+                                <td className="px-5 py-4">
+                                  <div className="flex flex-wrap gap-1 max-w-[260px]">
+                                    {(mode.types_vetements ?? []).slice(0, 4).map((type) => (
+                                      <span key={type} className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{type}</span>
+                                    ))}
+                                    {(mode.types_vetements?.length ?? 0) > 4 && (
+                                      <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-400">+{(mode.types_vetements!.length - 4)}</span>
+                                    )}
+                                    {(mode.types_vetements?.length ?? 0) === 0 && <span className="text-[11px] text-slate-300">—</span>}
+                                  </div>
+                                </td>
+                                <td className="px-5 py-4">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button type="button" onClick={() => openEditMode(mode)}
+                                      className="rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-1.5 text-[11px] font-bold text-sky-700 hover:bg-sky-100 transition cursor-pointer">
+                                      {t("edit")}
+                                    </button>
+                                    <button type="button" onClick={() => deleteMode(mode)}
+                                      className="rounded-xl border border-rose-100 bg-rose-50/60 px-3 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-100 transition cursor-pointer">
+                                      {t("delete")}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                );
+              })()}
+
               {activeTab === "establishments" && (() => {
                 const filtered = establishments.filter((e) =>
                   !estSearchQuery.trim() ||
@@ -1709,6 +1961,73 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
       </main>
 
       {/* ── Modals ── */}
+      {modeModalMode && (
+        <ModalShell
+          title={modeModalMode === "create" ? t("addMode") : t("editMode")}
+          subtitle={modeModalMode === "create" ? t("modeModalCreateSubtitle") : t("modeModalEditSubtitle")}
+          icon={Icons.washingMachine}
+          onClose={() => setModeModalMode(null)}
+        >
+          <div className="grid gap-5">
+            {/* Section 1 — Fiche technique */}
+            <div className="grid gap-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600">1 · Fiche technique</p>
+              <TextInput label={t("modeName")} value={modeForm.nom} onChange={(v) => setModeForm((s) => ({ ...s, nom: v }))} placeholder="ex. Lavage Délicat" />
+              <div className="grid grid-cols-3 gap-3">
+                <TextInput label={t("modeDurationField")} value={modeForm.duree} onChange={(v) => setModeForm((s) => ({ ...s, duree: v.replace(/[^0-9]/g, "") }))} placeholder="30" />
+                <TextInput label={t("modePriceField")} value={modeForm.prix_base} onChange={(v) => setModeForm((s) => ({ ...s, prix_base: v.replace(/[^0-9.]/g, "") }))} placeholder="200" />
+                <TextInput label={t("modeCapacityField")} value={modeForm.capacite_max} onChange={(v) => setModeForm((s) => ({ ...s, capacite_max: v.replace(/[^0-9.]/g, "") }))} placeholder="7" />
+              </div>
+            </div>
+
+            {/* Section 2 — Pourquoi choisir ce mode */}
+            <div>
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">2 · Pourquoi choisir ce mode ?</p>
+              <textarea
+                value={modeForm.message_guide}
+                onChange={(e) => setModeForm((s) => ({ ...s, message_guide: e.target.value }))}
+                placeholder={t("modeWhyPlaceholder")}
+                rows={2}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-sky-400 focus:ring-2 focus:ring-sky-100 hover:border-sky-200 resize-none"
+              />
+            </div>
+
+            {/* Section 3 — Textiles autorisés */}
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">3 · Ce que l'on peut laver ✅</p>
+              <TextInput label={t("modeAllowedField")} value={modeForm.types_vetements} onChange={(v) => setModeForm((s) => ({ ...s, types_vetements: v }))} placeholder="ex. Coton, T-shirts, Sous-vêtements" />
+            </div>
+
+            {/* Section 4 — À éviter + consigne */}
+            <div className="rounded-2xl border border-rose-100 bg-rose-50/40 p-4 space-y-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-600">4 · À éviter / vérifier ❌⚠️</p>
+              <TextInput label={t("modeForbiddenField")} value={modeForm.textiles_interdits} onChange={(v) => setModeForm((s) => ({ ...s, textiles_interdits: v }))} placeholder="ex. Laine, Soie, Cuir" />
+              <label className="block">
+                <span className="block text-[11px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1.5">{t("modeSafetyField")}</span>
+                <textarea
+                  value={modeForm.consigne_securite}
+                  onChange={(e) => setModeForm((s) => ({ ...s, consigne_securite: e.target.value }))}
+                  placeholder={t("modeSafetyPlaceholder")}
+                  rows={2}
+                  className="w-full rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-rose-400 focus:ring-2 focus:ring-rose-100 resize-none"
+                />
+              </label>
+            </div>
+
+            <div className="mt-2 flex justify-end gap-3 border-t border-slate-100 pt-5">
+              <button type="button" onClick={() => setModeModalMode(null)}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer">
+                {t("cancel")}
+              </button>
+              <button type="button" onClick={saveMode} disabled={savingMode}
+                className="rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-2.5 text-sm font-bold text-white shadow-[0_4px_16px_rgba(14,165,233,0.3)] hover:shadow-[0_6px_20px_rgba(14,165,233,0.4)] hover:-translate-y-0.5 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+                {modeModalMode === "create" ? t("createMode") : t("save")}
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      )}
+
       {establishmentModalMode && (
         <ModalShell
           title={establishmentModalMode === "create" ? "Nouvel établissement" : "Modifier l'établissement"}
@@ -1737,6 +2056,148 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Section: Modes de lavage attribués */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600">Modes de lavage attribués</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Recherchez et ajoutez des modes, définissez un prix et un mode recommandé</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-cyan-50 border border-cyan-100 px-2.5 py-1 text-[10px] font-black text-cyan-600">
+                {Object.values(establishmentForm.modeAssignments).filter((a) => a.checked).length} sélectionné(s)
+              </span>
+            </div>
+
+            {modes.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-center text-xs text-slate-400">
+                Aucun mode global n'existe encore. Créez des modes dans l'onglet « Modes ».
+              </div>
+            ) : (
+              <>
+                {/* Barre de recherche + dropdown */}
+                <div className="relative">
+                  <div className="relative">
+                    <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                    <input
+                      type="text"
+                      value={modeAssignSearch}
+                      onChange={(e) => { setModeAssignSearch(e.target.value); setModeDropdownOpen(true); }}
+                      onFocus={() => setModeDropdownOpen(true)}
+                      placeholder="Rechercher un mode à ajouter..."
+                      className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 placeholder:text-slate-300"
+                    />
+                  </div>
+                  {modeDropdownOpen && (() => {
+                    const available = modes.filter((m) =>
+                      !establishmentForm.modeAssignments[m.id]?.checked &&
+                      m.nom.toLowerCase().includes(modeAssignSearch.toLowerCase())
+                    );
+                    return (
+                      <>
+                        <div className="fixed inset-0 z-[70]" onClick={() => setModeDropdownOpen(false)} />
+                        <div className="absolute left-0 right-0 top-full z-[80] mt-2 max-h-56 overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_20px_50px_rgba(0,0,0,0.12)] animate-scale-in origin-top">
+                          {available.length === 0 ? (
+                            <div className="px-4 py-6 text-center text-xs text-slate-400">Aucun mode disponible</div>
+                          ) : available.map((mode) => (
+                            <button
+                              key={mode.id}
+                              type="button"
+                              onClick={() => {
+                                setEstablishmentForm((s) => ({
+                                  ...s,
+                                  modeAssignments: { ...s.modeAssignments, [mode.id]: { checked: true, price: String(mode.prix_base ?? ""), recommande: false } },
+                                }));
+                                setModeAssignSearch("");
+                                setModeDropdownOpen(false);
+                              }}
+                              className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-cyan-50/60"
+                            >
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-50 to-cyan-50 border border-sky-100 text-sky-600">{Icons.washingMachine}</div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-black text-slate-800 truncate">{mode.nom}</p>
+                                <p className="text-[10px] text-slate-400">{mode.duree} min · base {Number(mode.prix_base).toLocaleString("fr-FR")} DA</p>
+                              </div>
+                              <span className="shrink-0 text-cyan-500">{Icons.plus}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Liste des modes sélectionnés */}
+                <div className="mt-3 space-y-2">
+                  {modes.filter((m) => establishmentForm.modeAssignments[m.id]?.checked).length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 p-4 text-center text-[11px] text-slate-400">
+                      Aucun mode sélectionné. Utilisez la recherche ci-dessus.
+                    </div>
+                  ) : modes.filter((m) => establishmentForm.modeAssignments[m.id]?.checked).map((mode) => {
+                    const assignment = establishmentForm.modeAssignments[mode.id];
+                    const isRec = assignment?.recommande ?? false;
+                    return (
+                      <div key={mode.id} className={`rounded-2xl border p-3 transition ${isRec ? "border-amber-300 bg-amber-50/50" : "border-cyan-200 bg-cyan-50/40"}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-50 to-cyan-50 border border-sky-100 text-sky-600">
+                            {Icons.washingMachine}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black text-slate-800 truncate">{mode.nom} {isRec && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-amber-600">Recommandé</span>}</p>
+                            <p className="text-[10px] text-slate-400">{mode.duree} min · base {Number(mode.prix_base).toLocaleString("fr-FR")} DA</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={assignment?.price ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9.]/g, "");
+                                setEstablishmentForm((s) => ({
+                                  ...s,
+                                  modeAssignments: { ...s.modeAssignments, [mode.id]: { ...s.modeAssignments[mode.id], checked: true, price: val } },
+                                }));
+                              }}
+                              placeholder={String(mode.prix_base ?? "")}
+                              className="w-20 rounded-xl border border-cyan-200 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-900 text-right outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 transition"
+                            />
+                            <span className="text-[10px] font-bold text-slate-400">DA</span>
+                            {/* Toggle recommandé (étoile) */}
+                            <button
+                              type="button"
+                              title="Marquer comme recommandé"
+                              onClick={() => setEstablishmentForm((s) => {
+                                const next: Record<number, ModeAssignment> = {};
+                                Object.entries(s.modeAssignments).forEach(([k, v]) => { next[Number(k)] = { ...v, recommande: false }; });
+                                next[mode.id] = { ...s.modeAssignments[mode.id], recommande: !isRec };
+                                return { ...s, modeAssignments: next };
+                              })}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition ${isRec ? "border-amber-300 bg-amber-100 text-amber-500" : "border-slate-200 bg-white text-slate-300 hover:text-amber-400 hover:border-amber-200"}`}
+                            >
+                              <svg className="h-4 w-4" fill={isRec ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5l2.2 4.46 4.92.72-3.56 3.47.84 4.9-4.4-2.31-4.4 2.31.84-4.9L4.36 8.68l4.92-.72 2.2-4.46z" /></svg>
+                            </button>
+                            {/* Retirer */}
+                            <button
+                              type="button"
+                              title="Retirer"
+                              onClick={() => setEstablishmentForm((s) => {
+                                const next = { ...s.modeAssignments };
+                                delete next[mode.id];
+                                return { ...s, modeAssignments: next };
+                              })}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Section: Assistant optionnel (create only) */}
@@ -1776,32 +2237,101 @@ export function SuperAdminDashboardPage({ language }: SuperAdminDashboardPagePro
             </div>
           )}
 
-          {/* Edit: show existing assistants */}
-          {establishmentModalMode === "edit" && establishmentForm.id && (() => {
-            const estAssistants = assistants.filter((a) => a.establishment === establishmentForm.id);
-            return estAssistants.length > 0 ? (
-              <div className="mt-5">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500 mb-3">Assistants affectés</p>
-                <div className="space-y-2">
-                  {estAssistants.map((a) => (
-                    <div key={a.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-indigo-500 text-xs font-black text-white shadow-sm">
-                        {(a.first_name?.[0] ?? "A").toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-slate-800 truncate">{a.first_name} {a.last_name}</p>
-                        <p className="text-[10px] text-slate-400">{a.phone}</p>
-                      </div>
-                      <button type="button" onClick={() => openEditAssistant(a)}
-                        className="rounded-lg bg-sky-50 px-2.5 py-1 text-[10px] font-bold text-sky-700 hover:bg-sky-100 transition">
-                        Modifier
-                      </button>
-                    </div>
-                  ))}
-                </div>
+          {/* Section: Assistants affectés (recherche multi-sélection) */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">Assistants affectés</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Recherchez et rattachez un ou plusieurs assistants existants</p>
               </div>
-            ) : null;
-          })()}
+              <span className="shrink-0 rounded-full bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-[10px] font-black text-indigo-600">
+                {establishmentForm.assistantIds.length} affecté(s)
+              </span>
+            </div>
+
+            {/* Barre de recherche + dropdown */}
+            <div className="relative">
+              <div className="relative">
+                <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                <input
+                  type="text"
+                  value={assistantAssignSearch}
+                  onChange={(e) => { setAssistantAssignSearch(e.target.value); setAssistantDropdownOpen(true); }}
+                  onFocus={() => setAssistantDropdownOpen(true)}
+                  placeholder="Rechercher un assistant (nom, téléphone)..."
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 placeholder:text-slate-300"
+                />
+              </div>
+              {assistantDropdownOpen && (() => {
+                const q = assistantAssignSearch.toLowerCase();
+                const available = assistants.filter((a) =>
+                  !establishmentForm.assistantIds.includes(a.id) &&
+                  (`${a.first_name} ${a.last_name}`.toLowerCase().includes(q) || (a.phone ?? "").includes(assistantAssignSearch))
+                );
+                return (
+                  <>
+                    <div className="fixed inset-0 z-[70]" onClick={() => setAssistantDropdownOpen(false)} />
+                    <div className="absolute left-0 right-0 top-full z-[80] mt-2 max-h-56 overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_20px_50px_rgba(0,0,0,0.12)] animate-scale-in origin-top">
+                      {available.length === 0 ? (
+                        <div className="px-4 py-6 text-center text-xs text-slate-400">Aucun assistant disponible</div>
+                      ) : available.map((a) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => {
+                            setEstablishmentForm((s) => ({ ...s, assistantIds: [...s.assistantIds, a.id] }));
+                            setAssistantAssignSearch("");
+                            setAssistantDropdownOpen(false);
+                          }}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-indigo-50/60"
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-indigo-500 text-[11px] font-black text-white shadow-sm">
+                            {(a.first_name?.[0] ?? "A").toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black text-slate-800 truncate">{a.first_name} {a.last_name}</p>
+                            <p className="text-[10px] text-slate-400">{a.phone}{a.establishment && a.establishment !== establishmentForm.id ? ` · actuellement: ${a.establishment_name ?? "autre"}` : ""}</p>
+                          </div>
+                          <span className="shrink-0 text-indigo-500">{Icons.plus}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Liste des assistants sélectionnés */}
+            <div className="mt-3 space-y-2">
+              {establishmentForm.assistantIds.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 p-4 text-center text-[11px] text-slate-400">
+                  Aucun assistant affecté. Utilisez la recherche ci-dessus.
+                </div>
+              ) : establishmentForm.assistantIds.map((id) => {
+                const a = assistants.find((x) => x.id === id);
+                if (!a) return null;
+                return (
+                  <div key={id} className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 px-3 py-2.5">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-indigo-500 text-xs font-black text-white shadow-sm">
+                      {(a.first_name?.[0] ?? "A").toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800 truncate">{a.first_name} {a.last_name}</p>
+                      <p className="text-[10px] text-slate-400">{a.phone}</p>
+                    </div>
+                    <button
+                      type="button"
+                      title="Retirer"
+                      onClick={() => setEstablishmentForm((s) => ({ ...s, assistantIds: s.assistantIds.filter((x) => x !== id) }))}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-500"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           <div className="mt-6 flex justify-end gap-3 border-t border-slate-100 pt-5">
             <button type="button" onClick={() => setEstablishmentModalMode(null)}

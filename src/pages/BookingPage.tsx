@@ -12,7 +12,7 @@ type BookingPageProps = {
   phoneNumber?: string;
 };
 
-type WashModeKey = "rapid" | "express" | "premium" | "vip";
+type WashModeKey = string;
 type WizardStep = "mode" | "calendar" | "time";
 type DashboardTab = "myBookings" | "newBooking";
 
@@ -21,8 +21,24 @@ type WashMode = {
   label: string;
   duration: number;
   pricePerMinute: number;
+  price: number;            // prix total effectif (prix_specifique ?? prix_base)
   accent: string;
-  description: string;
+  description: string;      // message_guide
+  clothTypes: string[];     // types_vetements
+  recommended: boolean;     // recommandé pour cet établissement
+};
+
+// Forme brute renvoyée par /api/establishments/{id}/modes/
+type ApiMode = {
+  id: number;
+  nom: string;
+  duree: number;
+  prix_base: string | number;
+  prix_effectif: string | number;
+  capacite_max?: string | number;
+  types_vetements?: string[];
+  message_guide?: string;
+  recommande?: boolean;
 };
 
 type BookingRecord = {
@@ -105,13 +121,7 @@ function getModeKeyFromDraft(draft: ConfirmationDraft | null): WashModeKey | nul
   if (!draft) {
     return null;
   }
-
-  if (draft.modeKey === "rapid" || draft.modeKey === "express" || draft.modeKey === "premium" || draft.modeKey === "vip") {
-    return draft.modeKey;
-  }
-
-  const matchedMode = WASH_MODES.find((mode) => mode.label === draft.modeLabel);
-  return matchedMode?.key ?? null;
+  return draft.modeKey ?? null;
 }
 
 const PRICE_PER_MINUTE = 15;
@@ -120,40 +130,29 @@ const SLOT_STEP_MINUTES = 15;
 const OPEN_MINUTES = 8 * 60;
 const CLOSE_MINUTES = 22 * 60;
 
-const WASH_MODES: WashMode[] = [
-  {
-    key: "rapid",
-    label: "Rapide",
-    duration: 15,
-    pricePerMinute: PRICE_PER_MINUTE,
-    accent: "from-cyan-500 to-sky-600",
-    description: "Cycle court et efficace pour un nettoyage rapide.",
-  },
-  {
-    key: "express",
-    label: "Express",
-    duration: 30,
-    pricePerMinute: PRICE_PER_MINUTE,
-    accent: "from-sky-500 to-blue-600",
-    description: "Le meilleur équilibre entre vitesse et résultat.",
-  },
-  {
-    key: "premium",
-    label: "Premium",
-    duration: 45,
-    pricePerMinute: PRICE_PER_MINUTE,
-    accent: "from-blue-500 to-indigo-600",
-    description: "Traitement approfondi avec un temps plus confortable.",
-  },
-  {
-    key: "vip",
-    label: "VIP",
-    duration: 60,
-    pricePerMinute: PRICE_PER_MINUTE,
-    accent: "from-slate-900 to-slate-700",
-    description: "Le cycle le plus complet pour un rendu maximal.",
-  },
+// Dégradés appliqués cycliquement aux cartes de modes (préserve le design existant)
+const MODE_ACCENTS = [
+  "from-cyan-500 to-sky-600",
+  "from-sky-500 to-blue-600",
+  "from-blue-500 to-indigo-600",
+  "from-slate-900 to-slate-700",
 ];
+
+function mapApiMode(apiMode: ApiMode, index: number): WashMode {
+  const duration = Number(apiMode.duree) || 1;
+  const price = Number(apiMode.prix_effectif ?? apiMode.prix_base ?? 0);
+  return {
+    key: String(apiMode.id),
+    label: apiMode.nom,
+    duration,
+    price,
+    pricePerMinute: duration > 0 ? Math.round(price / duration) : price,
+    accent: MODE_ACCENTS[index % MODE_ACCENTS.length],
+    description: apiMode.message_guide || "",
+    clothTypes: Array.isArray(apiMode.types_vetements) ? apiMode.types_vetements : [],
+    recommended: Boolean(apiMode.recommande),
+  };
+}
 
 const BOOKING_STEP_PATHS: Record<WizardStep, string> = {
   mode: "/appointments/mode",
@@ -161,12 +160,12 @@ const BOOKING_STEP_PATHS: Record<WizardStep, string> = {
   time: "/appointments/time",
 };
 
-function getModeByKey(modeKey: WashModeKey | null) {
-  return WASH_MODES.find((mode) => mode.key === modeKey) ?? WASH_MODES[1];
+function getModeByKey(modes: WashMode[], modeKey: WashModeKey | null): WashMode | undefined {
+  return modes.find((mode) => mode.key === modeKey) ?? modes[0];
 }
 
-function getModeByDuration(durationMinutes: number) {
-  return WASH_MODES.find((mode) => mode.duration === durationMinutes) ?? WASH_MODES[1];
+function getModeByDuration(modes: WashMode[], durationMinutes: number): WashMode | undefined {
+  return modes.find((mode) => mode.duration === durationMinutes) ?? modes[0];
 }
 
 function getWizardStepFromPath(pathname: string): WizardStep {
@@ -337,7 +336,9 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   const [establishmentAddress, setEstablishmentAddress] = useState("Adresse non renseignée");
 
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>(resumeDraft ? "newBooking" : "myBookings");
-  const [selectedModeKey, setSelectedModeKey] = useState<WashModeKey>(resumeModeKey ?? "express");
+  const [modes, setModes] = useState<WashMode[]>([]);
+  const [modesLoading, setModesLoading] = useState(true);
+  const [selectedModeKey, setSelectedModeKey] = useState<WashModeKey>(resumeModeKey ?? "");
   const [selectedDate, setSelectedDate] = useState(resumeDraft?.booking_date ?? formatDateKey(new Date()));
   const [selectedTime, setSelectedTime] = useState(resumeDraft?.start_time ?? "");
   const [selectedBookingToEdit, setSelectedBookingToEdit] = useState<BookingRecord | null>(
@@ -356,8 +357,15 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   const latestAvailabilityRequestRef = useRef(0);
   const wizardStep = useMemo(() => getWizardStepFromPath(location.pathname), [location.pathname]);
 
-  const selectedMode = useMemo(() => getModeByKey(selectedModeKey), [selectedModeKey]);
-  const selectedPrice = selectedMode.duration * selectedMode.pricePerMinute;
+  const selectedMode = useMemo(() => getModeByKey(modes, selectedModeKey), [modes, selectedModeKey]);
+  const selectedPrice = selectedMode?.price ?? 0;
+
+  // Mémorise la sélection courante pour la restaurer après navigation (page de détail, etc.)
+  useEffect(() => {
+    if (selectedModeKey && typeof window !== "undefined") {
+      window.sessionStorage.setItem("chrono-selected-mode", selectedModeKey);
+    }
+  }, [selectedModeKey]);
   const activeBookings = useMemo(
     () => userBookings.filter((booking) => booking.status !== "ANNULE"),
     [userBookings]
@@ -389,7 +397,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
     setSelectedTime("");
     setSelectedBookingToEdit(null);
     if (!keepMode) {
-      setSelectedModeKey("express");
+      setSelectedModeKey(modes[0]?.key ?? "");
     }
     navigate(target === "home" ? "/appointments" : BOOKING_STEP_PATHS.mode, { replace: true });
   };
@@ -539,6 +547,49 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
     };
   }, [establishmentId, establishmentName, session.userId]);
 
+  // Charge dynamiquement les modes de lavage configurés pour l'établissement du client
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadModes = async () => {
+      setModesLoading(true);
+      try {
+        const response = await fetch(`/api/establishments/${establishmentId}/modes/`, {
+          headers: authHeader(),
+        });
+        if (!response.ok) {
+          if (isMounted) setModes([]);
+          return;
+        }
+        const data = (await response.json()) as ApiMode[];
+        if (!isMounted) return;
+
+        const mapped = Array.isArray(data) ? data.map(mapApiMode) : [];
+        setModes(mapped);
+
+        // Restaure la sélection mémorisée (survit à la navigation vers la page de détail)
+        const stored = typeof window !== "undefined"
+          ? window.sessionStorage.getItem("chrono-selected-mode")
+          : null;
+        setSelectedModeKey((prev) => {
+          if (mapped.some((m) => m.key === prev)) return prev;
+          if (stored && mapped.some((m) => m.key === stored)) return stored;
+          return mapped[0]?.key ?? "";
+        });
+      } catch {
+        if (isMounted) setModes([]);
+      } finally {
+        if (isMounted) setModesLoading(false);
+      }
+    };
+
+    void loadModes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [establishmentId, refreshCounter]);
+
   useEffect(() => {
     if (bookingsLoading) {
       return;
@@ -562,6 +613,10 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   }, [bookingsLoading, hasBookings, dashboardTab, location.pathname, navigate]);
 
   useEffect(() => {
+    if (!selectedMode) {
+      return;
+    }
+
     const controller = new AbortController();
     const requestId = latestAvailabilityRequestRef.current + 1;
     latestAvailabilityRequestRef.current = requestId;
@@ -572,7 +627,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModeKey, establishmentId, refreshCounter, language]);
+  }, [selectedModeKey, selectedMode?.duration, establishmentId, refreshCounter, language]);
 
   const startNewBooking = () => {
     setDashboardTab("newBooking");
@@ -582,11 +637,13 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   const openBookingForEdit = (booking: BookingRecord) => {
     setSelectedBookingToEdit(booking);
     setDashboardTab("newBooking");
-    setSelectedModeKey(
-      getModeByDuration(
-        Math.max(getMinutesFromTime(booking.end_time.slice(0, 5)) - getMinutesFromTime(booking.start_time.slice(0, 5)), 15)
-      ).key
+    const matchedMode = getModeByDuration(
+      modes,
+      Math.max(getMinutesFromTime(booking.end_time.slice(0, 5)) - getMinutesFromTime(booking.start_time.slice(0, 5)), 15)
     );
+    if (matchedMode) {
+      setSelectedModeKey(matchedMode.key);
+    }
     setSelectedDate(booking.booking_date);
     setSelectedTime(booking.start_time.slice(0, 5));
     navigate(BOOKING_STEP_PATHS.calendar);
@@ -606,6 +663,9 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   };
 
   const selectTime = (timeValue: string) => {
+    if (!selectedMode) {
+      return;
+    }
     setSelectedTime(timeValue);
     const confirmationDraft: ConfirmationDraft = {
       booking_date: selectedDate,
@@ -630,7 +690,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
   };
 
   const confirmReservation = async () => {
-    if (!customerPhone || !session?.userId) {
+    if (!customerPhone || !session?.userId || !selectedMode) {
       return;
     }
 
@@ -862,7 +922,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
           {showDashboardHome ? (
             <section className="grid flex-1 gap-0 lg:grid-cols-[0.78fr_1.22fr] animate-scale-in">
               <ClientBrandPanel
-                className="lg:min-h-[calc(100dvh-74px)]"
+                className="hidden lg:flex lg:min-h-[calc(100dvh-74px)]"
                 eyebrow={t("bookingDashboardClient")}
                 footer={
                   <div className="grid gap-4 rounded-[1.8rem] border border-white/15 bg-white/10 p-4 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:p-5">
@@ -909,7 +969,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
                           <div>
                             <p className="text-xs font-bold uppercase tracking-[0.3em] text-sky-500">{booking.booking_reference}</p>
                             <h3 className="mt-2 text-2xl font-black text-slate-900">
-                              {getModeByDuration(Math.max(getMinutesFromTime(booking.end_time.slice(0, 5)) - getMinutesFromTime(booking.start_time.slice(0, 5)), 10)).label}
+                              {getModeByDuration(modes, Math.max(getMinutesFromTime(booking.end_time.slice(0, 5)) - getMinutesFromTime(booking.start_time.slice(0, 5)), 10))?.label ?? t("bookingDetailsMode")}
                             </h3>
                             <p className="mt-1 text-sm text-slate-500">
                               {dateToLongLabel(booking.booking_date, language)} • {booking.start_time.slice(0, 5)} - {booking.end_time.slice(0, 5)}
@@ -977,23 +1037,52 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
             <section className="flex flex-1 items-stretch animate-scale-in">
               <div className="grid min-h-full w-full lg:min-h-[calc(100dvh-0px)] lg:grid-cols-[0.88fr_1.12fr]">
                 <ClientBrandPanel
-                  className="order-2 lg:order-1 lg:min-h-full"
+                  className="hidden lg:flex lg:order-1 lg:min-h-full"
                   footer={
+                    selectedMode ? (
                     <div className="grid gap-3 rounded-[1.5rem] border border-white/15 bg-white/10 p-4 text-sm text-sky-50/90 shadow-[0_16px_40px_rgba(2,132,199,0.18)] backdrop-blur-xl sm:rounded-[1.75rem] sm:p-5">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-semibold text-white">Tarif unitaire</span>
-                        <span className="text-lg font-black text-white">{selectedMode.pricePerMinute} DA / min</span>
+                        <span className="font-semibold text-white">Mode sélectionné</span>
+                        <span className="text-lg font-black text-white">{selectedMode.label}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-semibold text-white">Durée sélectionnée</span>
-                        <span className="text-lg font-black text-white">{selectedMode.duration} min</span>
+                        <span className="font-semibold text-white">Durée · Prix</span>
+                        <span className="text-lg font-black text-white">{selectedMode.duration} min · {selectedMode.price} DA</span>
                       </div>
-                      <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-sky-50/90">{selectedMode.description}</div>
                     </div>
+                    ) : undefined
                   }
                 />
 
                 <div className="order-1 flex min-h-0 flex-col px-4 py-4 pb-7 sm:px-6 sm:py-8 lg:order-2 lg:px-8 lg:py-9 animate-fade-in-up">
+                  {/* Action buttons (Logout & optional Back) */}
+                  <div className="mb-2 flex items-center justify-between w-full">
+                    {hasBookings ? (
+                      <button
+                        type="button"
+                        onClick={cancelAndReset}
+                        className="group inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-sky-300 hover:text-sky-700 hover:shadow-md"
+                      >
+                        <span className="text-base transition group-hover:-translate-x-0.5">{isArabic ? "→" : "←"}</span>
+                        {t("bookingBack")}
+                      </button>
+                    ) : (
+                      <div />
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      title={t("logout")}
+                      aria-label={t("logout")}
+                      className="group flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 hover:shadow-md"
+                    >
+                      <svg className="h-5 w-5 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                    </button>
+                  </div>
+
                   {availabilityError ? (
                     <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
                       {availabilityError}
@@ -1002,16 +1091,19 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
 
                   {wizardStep === "mode" ? (
                     <WizardModeStep
+                      modes={modes}
+                      loading={modesLoading}
                       selectedModeKey={selectedModeKey}
                       selectedMode={selectedMode}
                       language={language}
                       selectedPrice={selectedPrice}
                       onSelectMode={setSelectedModeKey}
+                      onViewDetails={(mode) => navigate(`/mode-details/${mode.key}`, { state: { mode } })}
                       onNext={() => navigate(BOOKING_STEP_PATHS.calendar)}
                     />
                   ) : null}
 
-                  {wizardStep === "calendar" ? (
+                  {wizardStep === "calendar" && selectedMode ? (
                     <WizardCalendarStep
                       selectedMode={selectedMode}
                       selectedDate={selectedDate}
@@ -1023,7 +1115,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
                     />
                   ) : null}
 
-                  {wizardStep === "time" ? (
+                  {wizardStep === "time" && selectedMode ? (
                     <WizardTimeStep
                       selectedMode={selectedMode}
                       selectedDate={selectedDate}
@@ -1074,7 +1166,7 @@ export function BookingPage({ language, phoneNumber }: BookingPageProps) {
 
               <div className="grid gap-4 px-6 py-6 sm:grid-cols-2 sm:px-7">
                 <DetailCard label={t("bookingDetailsStatus")} value={selectedBookingDetails.status === "PAYE" ? t("bookingStatusValidated") : selectedBookingDetails.status === "ANNULE" ? t("bookingStatusCancelled") : t("bookingStatusPendingPayment")} accent={selectedBookingDetails.status === "PAYE" ? "emerald" : selectedBookingDetails.status === "ANNULE" ? "rose" : "amber"} />
-                <DetailCard label={t("bookingDetailsMode")} value={getModeByDuration(Math.max(getMinutesFromTime(selectedBookingDetails.end_time.slice(0, 5)) - getMinutesFromTime(selectedBookingDetails.start_time.slice(0, 5)), 10)).label} />
+                <DetailCard label={t("bookingDetailsMode")} value={getModeByDuration(modes, Math.max(getMinutesFromTime(selectedBookingDetails.end_time.slice(0, 5)) - getMinutesFromTime(selectedBookingDetails.start_time.slice(0, 5)), 10))?.label ?? "—"} />
                 <DetailCard label={t("bookingDetailsDate")} value={dateToLongLabel(selectedBookingDetails.booking_date, language)} />
                 <DetailCard label={t("bookingDetailsTime")} value={`${selectedBookingDetails.start_time.slice(0, 5)} - ${selectedBookingDetails.end_time.slice(0, 5)}`} />
                 <DetailCard label={t("bookingDetailsPoste")} value={selectedBookingDetails.resource_label} />
@@ -1202,91 +1294,201 @@ function buildFallbackDay(dateValue: string, language: AppLanguage, mode: WashMo
 }
 
 function WizardModeStep({
+  modes,
+  loading,
   selectedModeKey,
   selectedMode,
   language,
   selectedPrice,
   onSelectMode,
+  onViewDetails,
   onNext,
 }: {
+  modes: WashMode[];
+  loading: boolean;
   selectedModeKey: WashModeKey;
-  selectedMode: WashMode;
+  selectedMode: WashMode | undefined;
   language?: AppLanguage;
   selectedPrice: number;
   onSelectMode: (modeKey: WashModeKey) => void;
+  onViewDetails: (mode: WashMode) => void;
   onNext: () => void;
 }) {
   const { t } = useTranslation();
+
+  // Nombre de colonnes adapté au nombre de modes (3 ou 4 sur une seule rangée), optimisé pour la responsivité
+  const colsClass =
+    modes.length >= 4
+      ? "xl:grid-cols-4 lg:grid-cols-2"
+      : modes.length === 3
+        ? "xl:grid-cols-3 lg:grid-cols-2"
+        : modes.length === 2
+          ? "lg:grid-cols-2"
+          : "lg:grid-cols-1";
+
+  const header = (
+    <div className="pt-2 sm:pt-6">
+      <h2 className="text-2xl font-black leading-[1.08] tracking-tight text-slate-900 sm:text-3xl">
+        <span className="block">{t("bookingModeTitle")}</span>
+      </h2>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+        {t("bookingModeIntroSub")}
+      </p>
+    </div>
+  );
+
+  // État de chargement
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col gap-5 sm:gap-6">
+        {header}
+        <div className="flex flex-1 items-center justify-center py-20">
+          <div className="h-10 w-10 rounded-full border-4 border-sky-200 border-t-sky-600 animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  // Aucun mode configuré pour cet établissement
+  if (modes.length === 0) {
+    return (
+      <div className="flex h-full flex-col gap-5 sm:gap-6">
+        {header}
+        <div className="flex flex-1 flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-sky-200 bg-sky-50/40 px-6 py-16 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-sky-100 text-sky-500 mb-4">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M5 3h14a1 1 0 011 1v16a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1z" /><circle cx="12" cy="14" r="4.5" /><path strokeLinecap="round" strokeLinejoin="round" d="M7 6h.01M10 6h.01" /></svg>
+          </div>
+          <p className="text-base font-black text-slate-700">{t("noClientModesTitle")}</p>
+          <p className="mt-1.5 max-w-md text-sm text-slate-400">{t("noClientModesHint")}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col gap-5 sm:gap-6">
-      <div className="pt-2 sm:pt-6">
-        <p className="text-xs font-bold uppercase tracking-[0.35em] text-sky-500">{t("bookingModeIntro")}</p>
-        <h2 className="mt-2 text-2xl font-black leading-[1.08] tracking-tight text-slate-900 sm:text-3xl">
-          <span className="block">{t("bookingModeTitle")}</span>
-        </h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-          {t("bookingModeIntroSub")}
-        </p>
-      </div>
+      {header}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
-        {WASH_MODES.map((mode, index) => {
+      <div className={`grid flex-1 auto-rows-fr gap-5 grid-cols-1 sm:grid-cols-2 ${colsClass}`}>
+        {modes.map((mode, index) => {
           const active = selectedModeKey === mode.key;
           return (
-            <button
+            <div
               key={mode.key}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => onSelectMode(mode.key)}
-              className={`group relative overflow-hidden rounded-[1.45rem] border p-4 text-left transition duration-300 hover:-translate-y-1 hover:shadow-[0_24px_60px_rgba(15,23,42,0.12)] sm:rounded-[1.75rem] sm:p-5 ${active ? "border-sky-500 bg-sky-50 shadow-[0_24px_60px_rgba(14,165,233,0.18)]" : "border-sky-100 bg-white/95"} animate-fade-in-up`}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectMode(mode.key); } }}
               style={{ animationDelay: `${index * 90}ms` }}
+              className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-[2rem] border bg-white text-left transition-all duration-300 animate-fade-in-up hover:-translate-y-1.5 ${
+                active
+                  ? "border-transparent shadow-[0_30px_70px_rgba(14,165,233,0.28)] ring-2 ring-sky-500"
+                  : "border-slate-200/70 shadow-[0_10px_40px_rgba(15,23,42,0.06)] hover:border-sky-200 hover:shadow-[0_28px_60px_rgba(15,23,42,0.14)]"
+              }`}
             >
-              <div className={`absolute inset-0 bg-gradient-to-br ${mode.accent} opacity-0 transition-opacity duration-300 group-hover:opacity-5 ${active ? "opacity-10" : ""}`} />
-              <div className="relative flex h-full flex-col justify-between gap-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl">{mode.label}</h3>
-                    <div className="mt-2 h-1 w-14 rounded-full bg-sky-500/20" />
+              {/* En-tête dégradé premium */}
+              <div className={`relative overflow-hidden px-6 pt-6 pb-7 sm:px-7 ${active ? `bg-gradient-to-br ${mode.accent}` : "bg-gradient-to-br from-slate-50 to-white"}`}>
+                <div className={`pointer-events-none absolute -right-10 -top-12 h-36 w-36 rounded-full blur-2xl transition-opacity duration-300 ${active ? "bg-white/25" : `bg-gradient-to-br ${mode.accent} opacity-[0.08] group-hover:opacity-20`}`} />
+                <div className={`pointer-events-none absolute -bottom-10 -left-8 h-28 w-28 rounded-full blur-2xl ${active ? "bg-white/10" : "bg-sky-200/20"}`} />
+                <div className="relative flex items-start justify-between gap-3">
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl transition ${active ? "bg-white/20 text-white" : "bg-white text-sky-600 shadow-sm ring-1 ring-slate-100"}`}>
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                      <rect x="4" y="3" width="16" height="18" rx="2.5" />
+                      <circle cx="12" cy="13.5" r="4.3" />
+                      <path strokeLinecap="round" d="M7 6h.01M10 6h.01" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.9 12.8c.7-.6 1.5-.6 2.1 0 .7.6 1.5.6 2.1 0" />
+                    </svg>
                   </div>
-                  <div className={`flex min-w-[4.7rem] items-center justify-center rounded-2xl px-2.5 py-2 text-center sm:min-w-[5.5rem] sm:px-3 ${active ? "bg-sky-600 text-white shadow-[0_12px_30px_rgba(14,165,233,0.28)]" : "bg-sky-50 text-sky-700"}`}>
-                    <span className="block text-[0.68rem] font-black uppercase tracking-[0.32em] leading-none whitespace-nowrap">
+                  <div className="flex flex-col items-end gap-2">
+                    {mode.recommended && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2.5 py-1 text-[0.6rem] font-black uppercase tracking-[0.14em] text-white shadow-sm">
+                        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M11.48 3.5l2.2 4.46 4.92.72-3.56 3.47.84 4.9-4.4-2.31-4.4 2.31.84-4.9L4.36 8.68l4.92-.72 2.2-4.46z" /></svg>
+                        {t("modeRecommendedBadge")}
+                      </span>
+                    )}
+                    <span className={`inline-flex items-center rounded-full px-3 py-1.5 text-[0.7rem] font-black uppercase tracking-[0.22em] ${active ? "bg-white/20 text-white" : "bg-sky-50 text-sky-700"}`}>
                       {mode.duration} min
                     </span>
                   </div>
                 </div>
+                <h3 className={`relative mt-4 text-2xl font-black leading-tight tracking-tight sm:text-[1.7rem] ${active ? "text-white" : "text-slate-900"}`}>{mode.label}</h3>
+              </div>
 
-                <p className="text-sm leading-6 text-slate-500">{mode.description}</p>
-
-                <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-4">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-semibold text-slate-600">Prix unitaire</span>
-                    <span className="font-black text-slate-900">{mode.pricePerMinute} DA / min</span>
+              {/* Corps */}
+              <div className="flex flex-1 flex-col px-6 pb-6 pt-5 sm:px-7">
+                {active && (
+                  <div className="mb-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-[0.7rem] font-black uppercase tracking-[0.18em] text-sky-600 ring-1 ring-sky-100">
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    {t("modeSelectedBadge")}
                   </div>
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="font-semibold text-slate-600">Total</span>
-                    <span className="text-lg font-black text-slate-900">{mode.duration * mode.pricePerMinute} DA</span>
-                  </div>
-                </div>
+                )}
+                {mode.description ? (
+                  <p className="text-sm leading-6 text-slate-500">{mode.description}</p>
+                ) : null}
 
-                <div className={`rounded-2xl px-4 py-3 text-center text-sm font-semibold transition ${active ? "bg-sky-600 text-white shadow-[0_10px_25px_rgba(14,165,233,0.24)]" : "bg-slate-50 text-slate-500 group-hover:bg-sky-100 group-hover:text-sky-700"}`}>
-                  {active ? t("selectedSlot") : t("bookingViewDetails")}
+                {mode.clothTypes.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-1.5">
+                    {mode.clothTypes.map((type) => (
+                      <span
+                        key={type}
+                        className="inline-flex items-center gap-1 rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[0.7rem] font-semibold text-sky-700"
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                        {type}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-auto pt-5">
+                  <div className="flex items-end justify-between gap-2">
+                    <div>
+                      <p className="text-[0.65rem] font-bold uppercase tracking-[0.22em] text-slate-400">Total</p>
+                      <p className="mt-1 text-3xl font-black tracking-tight text-slate-900">
+                        {Number(mode.price).toLocaleString("fr-FR")}<span className="ml-1.5 text-base font-bold text-slate-400">DA</span>
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.7rem] font-bold text-slate-500">{mode.pricePerMinute} DA / min</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onViewDetails(mode); }}
+                    className={`mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3.5 text-sm font-bold transition ${active ? `bg-gradient-to-r ${mode.accent} text-white shadow-[0_14px_32px_rgba(14,165,233,0.32)]` : "bg-slate-900 text-white hover:bg-slate-800"}`}
+                  >
+                    {t("bookingViewDetails")}
+                    <span className="transition group-hover:translate-x-0.5">→</span>
+                  </button>
                 </div>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
 
-      <div className="sticky bottom-2 z-20 rounded-[1.3rem] border border-sky-100 bg-white/95 p-3 shadow-[0_18px_38px_rgba(15,23,42,0.12)] backdrop-blur sm:static sm:rounded-[1.75rem] sm:bg-white/80 sm:p-4 sm:shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-bold uppercase tracking-[0.3em] text-sky-500">{t("bookingSummaryTitle")}</p>
-            <p className="text-base font-black text-slate-900 sm:text-lg">{selectedMode.label} • {selectedMode.duration} min • {selectedPrice} DA</p>
+      <div className="mt-auto sticky bottom-0 z-20 flex flex-col gap-3 bg-slate-50/95 py-3 backdrop-blur-md border-t border-slate-200/50 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0 lg:border-none lg:bg-transparent lg:backdrop-blur-none lg:static">
+        {/* Mobile/Tablet selected mode summary row */}
+        {selectedMode && (
+          <div className="flex items-center justify-between rounded-[1.25rem] border border-sky-100/80 bg-white p-3.5 shadow-[0_10px_30px_rgba(15,23,42,0.05)] lg:hidden animate-fade-in-up">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Mode sélectionné</p>
+              <p className="mt-0.5 truncate text-base font-black text-slate-900">{selectedMode.label}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Durée · Prix</p>
+              <p className="mt-0.5 text-base font-black text-sky-600">
+                {selectedMode.duration} min · {selectedMode.price} DA
+              </p>
+            </div>
           </div>
+        )}
 
+        <div className="flex justify-end">
           <button
             type="button"
             onClick={onNext}
-            className="group inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-6 py-3.5 text-sm font-bold text-white shadow-[0_16px_40px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-slate-800 sm:w-auto"
+            disabled={!selectedMode}
+            className="group inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-6 py-3.5 text-sm font-bold text-white shadow-[0_16px_40px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             {t("bookingNext")}
             <span className="ml-2 transition group-hover:translate-x-1">→</span>

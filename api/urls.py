@@ -16,6 +16,7 @@ from .views import (
     ResourceViewSet,
     StaffLoginAPIView,
     SuperAdminEstablishmentViewSet,
+    SuperAdminModeLavageViewSet,
     SuperAdminFinancialSummaryAPIView,
     SuperAdminHistoryAPIView,
     SuperAdminManagerViewSet,
@@ -40,6 +41,9 @@ superadmin_router.register(
     r"establishments",
     SuperAdminEstablishmentViewSet,
     basename="superadmin-establishment",
+)
+superadmin_router.register(
+    r"modes", SuperAdminModeLavageViewSet, basename="superadmin-mode"
 )
 superadmin_router.register(
     r"managers", SuperAdminManagerViewSet, basename="superadmin-manager"

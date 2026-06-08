@@ -364,7 +364,7 @@ export function ReservationConfirmationPage() {
         <section className="flex w-full bg-white/80 shadow-[0_30px_110px_rgba(15,23,42,0.12)] backdrop-blur-2xl">
           <div className="grid w-full lg:min-h-screen lg:grid-cols-[0.92fr_1.08fr]">
             <ClientBrandPanel
-              className="lg:min-h-screen"
+              className="hidden lg:flex lg:min-h-screen"
               eyebrow={t("confirmationPage")}
               footer={
                 <div className="grid gap-3 rounded-[1.75rem] border border-white/15 bg-white/10 p-5 shadow-[0_18px_50px_rgba(2,132,199,0.18)] backdrop-blur-xl">

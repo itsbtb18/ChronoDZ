@@ -244,18 +244,18 @@ export function UserLogin({ language, onChangeLanguage }: UserLoginProps) {
           </form>
 
           {/* In-person registration notice */}
-          <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-4 animate-fade-in-up delay-500">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-cyan-600">
-                <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4">
+          <div className="rounded-2xl border-2 border-cyan-200 bg-cyan-50 p-6 shadow-sm animate-fade-in-up delay-500">
+            <div className="flex items-start gap-4">
+              <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-cyan-600">
+                <svg fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-6 w-6">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>
               </span>
               <div className="min-w-0">
-                <p className="text-xs leading-5 text-slate-600">
+                <p className="text-base leading-6 text-slate-700">
                   {t("loginInPersonNotice")}
                 </p>
-                <p className="mt-1 text-[11px] font-bold text-cyan-700">
+                <p className="mt-2 text-base font-bold text-cyan-700">
                   {t("loginInPersonNoticeHighlight")}
                 </p>
               </div>

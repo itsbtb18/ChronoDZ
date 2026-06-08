@@ -15,6 +15,7 @@ import { BookingPage } from "./pages/BookingPage";
 import { PaymentSuccessPage } from "./pages/PaymentSuccessPage";
 import { PaymentFailurePage } from "./pages/PaymentFailurePage";
 import { LanguageSelectionPage } from "./pages/LanguageSelectionPage";
+import { ModeDetailPage } from "./pages/ModeDetailPage";
 import { ReservationConfirmationPage } from "./pages/ReservationConfirmationPage";
 import { StaffLogin } from "./pages/StaffLogin";
 import { SuperAdminDashboardPage } from "./pages/SuperAdminDashboardPage";
@@ -111,6 +112,7 @@ export default function App() {
             path="/appointments/*"
             element={<BookingPage language={language} phoneNumber={getAuthSession()?.phone || ""} />}
           />
+          <Route path="/mode-details/:modeId" element={<ModeDetailPage language={language} />} />
           <Route path="/confirmation" element={<ReservationConfirmationPage />} />
           <Route path="/payment/success" element={<PaymentSuccessPage />} />
           <Route path="/payment/failure" element={<PaymentFailurePage />} />
@@ -129,6 +131,7 @@ export default function App() {
 
         <Route element={<ProtectedRoute allowedRoles={["SUPER_ADMIN"]} redirectTo="/staff/login" />}>
           <Route path="/superadmin/dashboard"       element={<SuperAdminDashboardPage language={language} />} />
+          <Route path="/superadmin/modes"           element={<SuperAdminDashboardPage language={language} />} />
           <Route path="/superadmin/establishments"  element={<SuperAdminDashboardPage language={language} />} />
           <Route path="/superadmin/assistants"      element={<SuperAdminDashboardPage language={language} />} />
           <Route path="/superadmin/assistants/:assistantId" element={<SuperAdminDashboardPage language={language} />} />

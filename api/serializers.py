@@ -9,6 +9,8 @@ from .models import (
     BookingStatus,
     CustomUser,
     Establishment,
+    EtablissementMode,
+    ModeLavage,
     Resource,
     SystemConfig,
     UserRole,
@@ -20,32 +22,162 @@ from .models import (
 
 class EstablishmentSerializer(serializers.ModelSerializer):
     machine_count = serializers.IntegerField(required=False, min_value=0)
+    # Write-only : liste d'affectations de modes
+    # [{ "mode": id, "prix_specifique": number|null, "recommande": bool }]
+    modes = serializers.ListField(
+        child=serializers.DictField(), write_only=True, required=False
+    )
+    assigned_modes = serializers.SerializerMethodField(read_only=True)
+    # Write-only : liste d'IDs d'assistants à rattacher à cet établissement
+    assistant_ids = serializers.ListField(
+        child=serializers.IntegerField(), write_only=True, required=False
+    )
+    assigned_assistants = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Establishment
-        fields = ["id", "name", "address", "city", "created_at", "machine_count"]
+        fields = [
+            "id",
+            "name",
+            "address",
+            "city",
+            "opening_time",
+            "closing_time",
+            "created_at",
+            "machine_count",
+            "modes",
+            "assigned_modes",
+            "assistant_ids",
+            "assigned_assistants",
+        ]
         read_only_fields = ["id", "created_at"]
+
+    def validate(self, attrs):
+        opening = attrs.get(
+            "opening_time", getattr(self.instance, "opening_time", None)
+        )
+        closing = attrs.get(
+            "closing_time", getattr(self.instance, "closing_time", None)
+        )
+        if opening and closing and opening >= closing:
+            raise serializers.ValidationError(
+                {"closing_time": "L'heure de fermeture doit être après l'heure d'ouverture."}
+            )
+        return attrs
+
+    def get_assigned_modes(self, instance):
+        links = instance.mode_links.select_related("mode").all()
+        return [
+            {
+                "mode": link.mode_id,
+                "nom": link.mode.nom,
+                "duree": link.mode.duree,
+                "prix_base": link.mode.prix_base,
+                "prix_specifique": link.prix_specifique,
+                "prix_effectif": link.prix_effectif,
+                "recommande": link.recommande,
+            }
+            for link in links
+        ]
+
+    def get_assigned_assistants(self, instance):
+        return [
+            {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "phone": user.phone,
+            }
+            for user in instance.users.filter(role=UserRole.ADMIN).order_by("first_name")
+        ]
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret["machine_count"] = instance.resources.count()
         return ret
 
+    def _sync_modes(self, establishment, modes_data):
+        """Synchronise la table pivot etablissement_mode avec la liste fournie.
+        Garantit qu'au plus un seul mode est marqué comme recommandé.
+        """
+        desired: dict[int, dict] = {}
+        recommended_id = None
+        for entry in modes_data:
+            mode_id = entry.get("mode", entry.get("id"))
+            if mode_id in (None, ""):
+                continue
+            mode_id = int(mode_id)
+            prix = entry.get("prix_specifique")
+            if prix in ("", None):
+                prix = None
+            recommande = bool(entry.get("recommande", False))
+            if recommande and recommended_id is None:
+                recommended_id = mode_id
+            desired[mode_id] = {"prix": prix, "recommande": recommande}
+
+        # Force l'unicité du mode recommandé
+        if recommended_id is not None:
+            for mid in desired:
+                desired[mid]["recommande"] = mid == recommended_id
+
+        # Supprime les modes décochés
+        establishment.mode_links.exclude(mode_id__in=desired.keys()).delete()
+
+        existing = {link.mode_id: link for link in establishment.mode_links.all()}
+        for mode_id, cfg in desired.items():
+            if not ModeLavage.objects.filter(pk=mode_id).exists():
+                continue
+            link = existing.get(mode_id)
+            if link is not None:
+                link.prix_specifique = cfg["prix"]
+                link.recommande = cfg["recommande"]
+                link.save(update_fields=["prix_specifique", "recommande"])
+            else:
+                EtablissementMode.objects.create(
+                    etablissement=establishment,
+                    mode_id=mode_id,
+                    prix_specifique=cfg["prix"],
+                    recommande=cfg["recommande"],
+                )
+
+    def _sync_assistants(self, establishment, assistant_ids):
+        """Rattache les assistants sélectionnés à cet établissement."""
+        ids = [int(a) for a in assistant_ids if a not in (None, "")]
+        if not ids:
+            return
+        CustomUser.objects.filter(id__in=ids, role=UserRole.ADMIN).update(
+            establishment=establishment
+        )
+
     @transaction.atomic
     def create(self, validated_data):
         machine_count = validated_data.pop("machine_count", 0)
+        modes_data = validated_data.pop("modes", None)
+        assistant_ids = validated_data.pop("assistant_ids", None)
         establishment = super().create(validated_data)
 
         for i in range(1, machine_count + 1):
             Resource.objects.create(
                 establishment=establishment, label=f"Machine {i}", status="ACTIF"
             )
+
+        if modes_data is not None:
+            self._sync_modes(establishment, modes_data)
+        if assistant_ids is not None:
+            self._sync_assistants(establishment, assistant_ids)
         return establishment
 
     @transaction.atomic
     def update(self, instance, validated_data):
         machine_count = validated_data.pop("machine_count", None)
+        modes_data = validated_data.pop("modes", None)
+        assistant_ids = validated_data.pop("assistant_ids", None)
         establishment = super().update(instance, validated_data)
+
+        if modes_data is not None:
+            self._sync_modes(establishment, modes_data)
+        if assistant_ids is not None:
+            self._sync_assistants(establishment, assistant_ids)
 
         if machine_count is not None:
             current_resources = list(instance.resources.all().order_by("id"))
@@ -504,6 +636,83 @@ class BookingReceiptSerializer(serializers.Serializer):
     payment_status_label = serializers.CharField()
     qr_text = serializers.CharField()
     created_at = serializers.DateTimeField()
+
+
+class ModeLavageSerializer(serializers.ModelSerializer):
+    establishment_count = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = ModeLavage
+        fields = [
+            "id",
+            "nom",
+            "duree",
+            "prix_base",
+            "capacite_max",
+            "types_vetements",
+            "message_guide",
+            "textiles_interdits",
+            "consigne_securite",
+            "establishment_count",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "establishment_count"]
+
+    def get_establishment_count(self, obj) -> int:
+        return obj.etablissement_links.count()
+
+    def validate_nom(self, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Le nom du mode est obligatoire.")
+        return value
+
+    def validate_duree(self, value: int) -> int:
+        if value is None or value <= 0:
+            raise serializers.ValidationError(
+                "La durée doit être supérieure à 0 minute."
+            )
+        return value
+
+    def _normalize_str_list(self, value, field_label):
+        # Accepte une liste ou une chaîne séparée par des virgules.
+        if isinstance(value, str):
+            items = [v.strip() for v in value.split(",")]
+        elif isinstance(value, (list, tuple)):
+            items = [str(v).strip() for v in value]
+        else:
+            raise serializers.ValidationError(f"Format invalide pour {field_label}.")
+        return [item for item in items if item]
+
+    def validate_types_vetements(self, value):
+        return self._normalize_str_list(value, "les textiles autorisés")
+
+    def validate_textiles_interdits(self, value):
+        return self._normalize_str_list(value, "les textiles à éviter")
+
+
+class EtablissementModeSerializer(serializers.ModelSerializer):
+    mode_nom = serializers.CharField(source="mode.nom", read_only=True)
+    etablissement_name = serializers.CharField(
+        source="etablissement.name", read_only=True
+    )
+    prix_effectif = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+
+    class Meta:
+        model = EtablissementMode
+        fields = [
+            "id",
+            "etablissement",
+            "etablissement_name",
+            "mode",
+            "mode_nom",
+            "prix_specifique",
+            "prix_effectif",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "prix_effectif"]
 
 
 class SystemConfigSerializer(serializers.ModelSerializer):
